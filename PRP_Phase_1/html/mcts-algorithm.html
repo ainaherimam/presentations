@@ -23,59 +23,333 @@ const { useState, useEffect, useRef, useCallback, useMemo } = React;
 /* ─────────────────────────────────────────────────────────────────────────────
    DEMO LOG — hardcoded for instant testing
 ───────────────────────────────────────────────────────────────────────────── */
-const DEMO_LOG = `MCTS_VIZ | INIT       | SEARCH_START          | move_idx=1 player=X total_iterations=10 exploration_factor=1.4142 temperature=1.0000 dirichlet_alpha=0.3000 dirichlet_epsilon=0.2500
-MCTS_VIZ | INIT       | BOARD_STATE           | board=.X....O.X.......
-MCTS_VIZ | INIT       | ROOT_EXPANDED         | node=ROOT player=X nn_value=0.1230 num_children=3 dirichlet_alpha=0.3000 dirichlet_epsilon=0.2500
-MCTS_VIZ | INIT       | ROOT_CHILD            | child_idx=0 move=(0,1,d1,t0) prior_after_noise=0.4100
-MCTS_VIZ | INIT       | ROOT_CHILD            | child_idx=1 move=(1,2,d1,t0) prior_after_noise=0.3200
-MCTS_VIZ | INIT       | ROOT_CHILD            | child_idx=2 move=(2,0,d1,t0) prior_after_noise=0.2700
-MCTS_VIZ | SELECTION  | ITERATION_START       | iteration=1
-MCTS_VIZ | SELECTION  | PUCT_CANDIDATE        | iteration=1 depth=0 parent=ROOT move=(0,1,d1,t0) q=0.0000 u=0.5798 puct=0.5798 prior=0.4100 child_visits=0 parent_visits=0
-MCTS_VIZ | SELECTION  | PUCT_CANDIDATE        | iteration=1 depth=0 parent=ROOT move=(1,2,d1,t0) q=0.0000 u=0.4527 puct=0.4527 prior=0.3200 child_visits=0 parent_visits=0
-MCTS_VIZ | SELECTION  | PUCT_CANDIDATE        | iteration=1 depth=0 parent=ROOT move=(2,0,d1,t0) q=0.0000 u=0.3818 puct=0.3818 prior=0.2700 child_visits=0 parent_visits=0
-MCTS_VIZ | SELECTION  | LEVEL_DECISION        | iteration=1 depth=0 parent=ROOT chosen=(0,1,d1,t0) winning_puct=0.5798
-MCTS_VIZ | SELECTION  | MOVE_APPLIED          | iteration=1 depth=0 move=(0,1,d1,t0) player_after=O
-MCTS_VIZ | SELECTION  | LEAF_REACHED          | iteration=1 depth=1 move=(0,1,d1,t0) already_expanded=false visit_count=0
-MCTS_VIZ | EVALUATION | NN_QUERY              | iteration=1 move=(0,1,d1,t0) player=O
-MCTS_VIZ | EVALUATION | NN_RESULT             | iteration=1 move=(0,1,d1,t0) nn_value=-0.0820 children_created=2
-MCTS_VIZ | EVALUATION | EXPANSION_CHILD       | iteration=1 parent=(0,1,d1,t0) child_idx=0 move=(1,2,d1,t0) prior=0.5500 child_player=X
-MCTS_VIZ | EVALUATION | EXPANSION_CHILD       | iteration=1 parent=(0,1,d1,t0) child_idx=1 move=(2,0,d1,t0) prior=0.4500 child_player=X
-MCTS_VIZ | BACKPROP   | START                 | iteration=1 leaf=(0,1,d1,t0) raw_value=-0.0820
-MCTS_VIZ | BACKPROP   | STEP                  | iteration=1 depth_from_leaf=0 move=(0,1,d1,t0) value_applied=0.0820 acc_value=0.0820 visit_count=1 q=0.0820
-MCTS_VIZ | BACKPROP   | STEP                  | iteration=1 depth_from_leaf=1 move=ROOT value_applied=-0.0820 acc_value=-0.0820 visit_count=1 q=-0.0820
-MCTS_VIZ | BACKPROP   | DONE                  | iteration=1 root_acc=-0.0820 root_visits=1 root_q=-0.0820
-MCTS_VIZ | SELECTION  | ITERATION_START       | iteration=2
-MCTS_VIZ | SELECTION  | PUCT_CANDIDATE        | iteration=2 depth=0 parent=ROOT move=(0,1,d1,t0) q=0.0820 u=0.1706 puct=0.2526 prior=0.2410 child_visits=1 parent_visits=1
-MCTS_VIZ | SELECTION  | PUCT_CANDIDATE        | iteration=2 depth=0 parent=ROOT move=(1,2,d1,t0) q=0.0000 u=0.4527 puct=0.4527 prior=0.3200 child_visits=0 parent_visits=1
-MCTS_VIZ | SELECTION  | PUCT_CANDIDATE        | iteration=2 depth=0 parent=ROOT move=(2,0,d1,t0) q=0.0000 u=0.3818 puct=0.3818 prior=0.2700 child_visits=0 parent_visits=1
-MCTS_VIZ | SELECTION  | LEVEL_DECISION        | iteration=2 depth=0 parent=ROOT chosen=(1,2,d1,t0) winning_puct=0.4527
-MCTS_VIZ | SELECTION  | MOVE_APPLIED          | iteration=2 depth=0 move=(1,2,d1,t0) player_after=O
-MCTS_VIZ | SELECTION  | LEAF_REACHED          | iteration=2 depth=1 move=(1,2,d1,t0) already_expanded=false visit_count=0
-MCTS_VIZ | EVALUATION | NN_QUERY              | iteration=2 move=(1,2,d1,t0) player=O
-MCTS_VIZ | EVALUATION | NN_RESULT             | iteration=2 move=(1,2,d1,t0) nn_value=0.3150 children_created=2
-MCTS_VIZ | EVALUATION | EXPANSION_CHILD       | iteration=2 parent=(1,2,d1,t0) child_idx=0 move=(0,1,d1,t0) prior=0.6000 child_player=X
-MCTS_VIZ | EVALUATION | EXPANSION_CHILD       | iteration=2 parent=(1,2,d1,t0) child_idx=1 move=(2,0,d1,t0) prior=0.4000 child_player=X
-MCTS_VIZ | BACKPROP   | START                 | iteration=2 leaf=(1,2,d1,t0) raw_value=0.3150
-MCTS_VIZ | BACKPROP   | STEP                  | iteration=2 depth_from_leaf=0 move=(1,2,d1,t0) value_applied=-0.3150 acc_value=-0.3150 visit_count=1 q=-0.3150
-MCTS_VIZ | BACKPROP   | STEP                  | iteration=2 depth_from_leaf=1 move=ROOT value_applied=0.3150 acc_value=0.2330 visit_count=2 q=0.1165
-MCTS_VIZ | BACKPROP   | DONE                  | iteration=2 root_acc=0.2330 root_visits=2 root_q=0.1165
-MCTS_VIZ | SELECTION  | ITERATION_START       | iteration=3
-MCTS_VIZ | SELECTION  | PUCT_CANDIDATE        | iteration=3 depth=0 parent=ROOT move=(0,1,d1,t0) q=0.0820 u=0.2411 puct=0.3231 prior=0.2410 child_visits=1 parent_visits=2
-MCTS_VIZ | SELECTION  | PUCT_CANDIDATE        | iteration=3 depth=0 parent=ROOT move=(1,2,d1,t0) q=-0.3150 u=0.4527 puct=0.1377 prior=0.3200 child_visits=1 parent_visits=2
-MCTS_VIZ | SELECTION  | PUCT_CANDIDATE        | iteration=3 depth=0 parent=ROOT move=(2,0,d1,t0) q=0.0000 u=0.5404 puct=0.5404 prior=0.2700 child_visits=0 parent_visits=2
-MCTS_VIZ | SELECTION  | LEVEL_DECISION        | iteration=3 depth=0 parent=ROOT chosen=(2,0,d1,t0) winning_puct=0.5404
-MCTS_VIZ | SELECTION  | MOVE_APPLIED          | iteration=3 depth=0 move=(2,0,d1,t0) player_after=O
-MCTS_VIZ | SELECTION  | LEAF_REACHED          | iteration=3 depth=1 move=(2,0,d1,t0) already_expanded=false visit_count=0
-MCTS_VIZ | EVALUATION | TERMINAL_WIN          | iteration=3 move=(2,0,d1,t0) winner=X value=1.0000
-MCTS_VIZ | BACKPROP   | START                 | iteration=3 leaf=(2,0,d1,t0) raw_value=1.0000
-MCTS_VIZ | BACKPROP   | STEP                  | iteration=3 depth_from_leaf=0 move=(2,0,d1,t0) value_applied=-1.0000 acc_value=-1.0000 visit_count=1 q=-1.0000
-MCTS_VIZ | BACKPROP   | STEP                  | iteration=3 depth_from_leaf=1 move=ROOT value_applied=1.0000 acc_value=1.2330 visit_count=3 q=0.4110
-MCTS_VIZ | BACKPROP   | DONE                  | iteration=3 root_acc=1.2330 root_visits=3 root_q=0.4110
-MCTS_VIZ | FINAL      | ROOT_CHILD_STAT       | move_idx=1 rank=0 move=(2,0,d1,t0) visit_count=1 q=-1.0000 prior=0.2700 policy_prob=0.3333
-MCTS_VIZ | FINAL      | ROOT_CHILD_STAT       | move_idx=1 rank=1 move=(0,1,d1,t0) visit_count=1 q=0.0820 prior=0.4100 policy_prob=0.3333
-MCTS_VIZ | FINAL      | ROOT_CHILD_STAT       | move_idx=1 rank=2 move=(1,2,d1,t0) visit_count=1 q=-0.3150 prior=0.3200 policy_prob=0.3333
-MCTS_VIZ | FINAL      | DECISION              | move_idx=1 move=(0,1,d1,t0) visit_count=1 q=0.0820 temperature=1.0000 selection_mode=sampled
-MCTS_VIZ | FINAL      | SEARCH_END            | move_idx=1 total_iterations_run=3`;
+const DEMO_LOG = `MCTS_VIZ | INIT       | SEARCH_START         | move_idx=1 player=X total_iterations=100 exploration_factor=1.4000 temperature=0.1000 dirichlet_alpha=0.3000 dirichlet_epsilon=0.2500
+MCTS_VIZ | INIT       | BOARD_STATE          | board=OXXOX.OXOXO..O.X
+MCTS_VIZ | EVALUATION | EXPANSION_CHILD      | iteration=0 parent=ROOT child_idx=0 move=(1,1,d1,t-1) prior=0.3637 child_player=O
+MCTS_VIZ | EVALUATION | EXPANSION_CHILD      | iteration=0 parent=ROOT child_idx=1 move=(2,3,d1,t-1) prior=0.1843 child_player=O
+MCTS_VIZ | EVALUATION | EXPANSION_CHILD      | iteration=0 parent=ROOT child_idx=2 move=(3,0,d1,t-1) prior=0.2206 child_player=O
+MCTS_VIZ | EVALUATION | EXPANSION_CHILD      | iteration=0 parent=ROOT child_idx=3 move=(3,2,d1,t-1) prior=0.2314 child_player=O
+MCTS_VIZ | INIT       | ROOT_EXPANDED        | node=ROOT player=X nn_value=0.2860 num_children=4 dirichlet_alpha=0.3000 dirichlet_epsilon=0.2500
+MCTS_VIZ | INIT       | ROOT_CHILD           | child_idx=0 move=(1,1,d1,t-1) prior_after_noise=0.3637
+MCTS_VIZ | INIT       | ROOT_CHILD           | child_idx=1 move=(2,3,d1,t-1) prior_after_noise=0.1843
+MCTS_VIZ | INIT       | ROOT_CHILD           | child_idx=2 move=(3,0,d1,t-1) prior_after_noise=0.2206
+MCTS_VIZ | INIT       | ROOT_CHILD           | child_idx=3 move=(3,2,d1,t-1) prior_after_noise=0.2314
+MCTS_VIZ | SELECTION  | ITERATION_START      | iteration=1
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=1 depth=0 parent=ROOT move=(1,1,d1,t-1) q=0.0000 u=0.0000 puct=0.0000 prior=0.3637 child_visits=0 parent_visits=0
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=1 depth=0 parent=ROOT move=(2,3,d1,t-1) q=0.0000 u=0.0000 puct=0.0000 prior=0.1843 child_visits=0 parent_visits=0
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=1 depth=0 parent=ROOT move=(3,0,d1,t-1) q=0.0000 u=0.0000 puct=0.0000 prior=0.2206 child_visits=0 parent_visits=0
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=1 depth=0 parent=ROOT move=(3,2,d1,t-1) q=0.0000 u=0.0000 puct=0.0000 prior=0.2314 child_visits=0 parent_visits=0
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=1 depth=0 parent=ROOT chosen=(1,1,d1,t-1) winning_puct=0.0000
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=1 depth=0 move=(1,1,d1,t-1) player_after=O
+MCTS_VIZ | SELECTION  | LEAF_REACHED         | iteration=1 depth=1 move=(1,1,d1,t-1) already_expanded=false visit_count=0
+MCTS_VIZ | EVALUATION | TERMINAL_WIN         | iteration=1 move=(1,1,d1,t-1) winner=O value=1.0000
+MCTS_VIZ | BACKPROP   | START                | iteration=1 leaf=(1,1,d1,t-1) raw_value=1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=1 depth_from_leaf=0 move=(1,1,d1,t-1) value_applied=-1.0000 acc_value=-1.0000 visit_count=1 q=-1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=1 depth_from_leaf=1 move=ROOT value_applied=1.0000 acc_value=1.0000 visit_count=1 q=1.0000
+MCTS_VIZ | BACKPROP   | DONE                 | iteration=1 root_acc=1.0000 root_visits=1 root_q=1.0000
+MCTS_VIZ | SELECTION  | ITERATION_START      | iteration=2
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=2 depth=0 parent=ROOT move=(1,1,d1,t-1) q=-1.0000 u=0.2546 puct=-0.7454 prior=0.3637 child_visits=1 parent_visits=1
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=2 depth=0 parent=ROOT move=(2,3,d1,t-1) q=0.0000 u=0.2580 puct=0.2580 prior=0.1843 child_visits=0 parent_visits=1
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=2 depth=0 parent=ROOT move=(3,0,d1,t-1) q=0.0000 u=0.3088 puct=0.3088 prior=0.2206 child_visits=0 parent_visits=1
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=2 depth=0 parent=ROOT move=(3,2,d1,t-1) q=0.0000 u=0.3240 puct=0.3240 prior=0.2314 child_visits=0 parent_visits=1
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=2 depth=0 parent=ROOT chosen=(3,2,d1,t-1) winning_puct=0.3240
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=2 depth=0 move=(3,2,d1,t-1) player_after=O
+MCTS_VIZ | SELECTION  | LEAF_REACHED         | iteration=2 depth=1 move=(3,2,d1,t-1) already_expanded=false visit_count=0
+MCTS_VIZ | EVALUATION | TERMINAL_WIN         | iteration=2 move=(3,2,d1,t-1) winner=O value=1.0000
+MCTS_VIZ | BACKPROP   | START                | iteration=2 leaf=(3,2,d1,t-1) raw_value=1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=2 depth_from_leaf=0 move=(3,2,d1,t-1) value_applied=-1.0000 acc_value=-1.0000 visit_count=1 q=-1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=2 depth_from_leaf=1 move=ROOT value_applied=1.0000 acc_value=2.0000 visit_count=2 q=1.0000
+MCTS_VIZ | BACKPROP   | DONE                 | iteration=2 root_acc=2.0000 root_visits=2 root_q=1.0000
+MCTS_VIZ | SELECTION  | ITERATION_START      | iteration=3
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=3 depth=0 parent=ROOT move=(1,1,d1,t-1) q=-1.0000 u=0.3601 puct=-0.6399 prior=0.3637 child_visits=1 parent_visits=2
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=3 depth=0 parent=ROOT move=(2,3,d1,t-1) q=0.0000 u=0.3649 puct=0.3649 prior=0.1843 child_visits=0 parent_visits=2
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=3 depth=0 parent=ROOT move=(3,0,d1,t-1) q=0.0000 u=0.4367 puct=0.4367 prior=0.2206 child_visits=0 parent_visits=2
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=3 depth=0 parent=ROOT move=(3,2,d1,t-1) q=-1.0000 u=0.2291 puct=-0.7709 prior=0.2314 child_visits=1 parent_visits=2
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=3 depth=0 parent=ROOT chosen=(3,0,d1,t-1) winning_puct=0.4367
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=3 depth=0 move=(3,0,d1,t-1) player_after=O
+MCTS_VIZ | SELECTION  | LEAF_REACHED         | iteration=3 depth=1 move=(3,0,d1,t-1) already_expanded=false visit_count=0
+MCTS_VIZ | EVALUATION | NN_QUERY             | iteration=3 move=(3,0,d1,t-1) player=O
+MCTS_VIZ | EVALUATION | EXPANSION_CHILD      | iteration=3 parent=(3,0,d1,t-1) child_idx=0 move=(1,1,d1,t-1) prior=0.3412 child_player=X
+MCTS_VIZ | EVALUATION | EXPANSION_CHILD      | iteration=3 parent=(3,0,d1,t-1) child_idx=1 move=(2,3,d1,t-1) prior=0.2873 child_player=X
+MCTS_VIZ | EVALUATION | EXPANSION_CHILD      | iteration=3 parent=(3,0,d1,t-1) child_idx=2 move=(3,2,d1,t-1) prior=0.3714 child_player=X
+MCTS_VIZ | EVALUATION | NN_RESULT            | iteration=3 move=(3,0,d1,t-1) nn_value=0.0908 children_created=3
+MCTS_VIZ | BACKPROP   | START                | iteration=3 leaf=(3,0,d1,t-1) raw_value=0.0908
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=3 depth_from_leaf=0 move=(3,0,d1,t-1) value_applied=-0.0908 acc_value=-0.0908 visit_count=1 q=-0.0908
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=3 depth_from_leaf=1 move=ROOT value_applied=0.0908 acc_value=2.0908 visit_count=3 q=0.6969
+MCTS_VIZ | BACKPROP   | DONE                 | iteration=3 root_acc=2.0908 root_visits=3 root_q=0.6969
+MCTS_VIZ | SELECTION  | ITERATION_START      | iteration=4
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=4 depth=0 parent=ROOT move=(1,1,d1,t-1) q=-1.0000 u=0.4410 puct=-0.5590 prior=0.3637 child_visits=1 parent_visits=3
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=4 depth=0 parent=ROOT move=(2,3,d1,t-1) q=0.0000 u=0.4468 puct=0.4468 prior=0.1843 child_visits=0 parent_visits=3
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=4 depth=0 parent=ROOT move=(3,0,d1,t-1) q=-0.0908 u=0.2674 puct=0.1766 prior=0.2206 child_visits=1 parent_visits=3
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=4 depth=0 parent=ROOT move=(3,2,d1,t-1) q=-1.0000 u=0.2806 puct=-0.7194 prior=0.2314 child_visits=1 parent_visits=3
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=4 depth=0 parent=ROOT chosen=(2,3,d1,t-1) winning_puct=0.4468
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=4 depth=0 move=(2,3,d1,t-1) player_after=O
+MCTS_VIZ | SELECTION  | LEAF_REACHED         | iteration=4 depth=1 move=(2,3,d1,t-1) already_expanded=false visit_count=0
+MCTS_VIZ | EVALUATION | TERMINAL_WIN         | iteration=4 move=(2,3,d1,t-1) winner=O value=1.0000
+MCTS_VIZ | BACKPROP   | START                | iteration=4 leaf=(2,3,d1,t-1) raw_value=1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=4 depth_from_leaf=0 move=(2,3,d1,t-1) value_applied=-1.0000 acc_value=-1.0000 visit_count=1 q=-1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=4 depth_from_leaf=1 move=ROOT value_applied=1.0000 acc_value=3.0908 visit_count=4 q=0.7727
+MCTS_VIZ | BACKPROP   | DONE                 | iteration=4 root_acc=3.0908 root_visits=4 root_q=0.7727
+MCTS_VIZ | SELECTION  | ITERATION_START      | iteration=5
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=5 depth=0 parent=ROOT move=(1,1,d1,t-1) q=-1.0000 u=0.5092 puct=-0.4908 prior=0.3637 child_visits=1 parent_visits=4
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=5 depth=0 parent=ROOT move=(2,3,d1,t-1) q=-1.0000 u=0.2580 puct=-0.7420 prior=0.1843 child_visits=1 parent_visits=4
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=5 depth=0 parent=ROOT move=(3,0,d1,t-1) q=-0.0908 u=0.3088 puct=0.2180 prior=0.2206 child_visits=1 parent_visits=4
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=5 depth=0 parent=ROOT move=(3,2,d1,t-1) q=-1.0000 u=0.3240 puct=-0.6760 prior=0.2314 child_visits=1 parent_visits=4
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=5 depth=0 parent=ROOT chosen=(3,0,d1,t-1) winning_puct=0.2180
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=5 depth=0 move=(3,0,d1,t-1) player_after=O
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=5 depth=1 parent=(3,0,d1,t-1) move=(1,1,d1,t-1) q=0.0000 u=0.4777 puct=0.4777 prior=0.3412 child_visits=0 parent_visits=1
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=5 depth=1 parent=(3,0,d1,t-1) move=(2,3,d1,t-1) q=0.0000 u=0.4023 puct=0.4023 prior=0.2873 child_visits=0 parent_visits=1
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=5 depth=1 parent=(3,0,d1,t-1) move=(3,2,d1,t-1) q=0.0000 u=0.5200 puct=0.5200 prior=0.3714 child_visits=0 parent_visits=1
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=5 depth=1 parent=(3,0,d1,t-1) chosen=(3,2,d1,t-1) winning_puct=0.5200
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=5 depth=1 move=(3,2,d1,t-1) player_after=X
+MCTS_VIZ | SELECTION  | LEAF_REACHED         | iteration=5 depth=2 move=(3,2,d1,t-1) already_expanded=false visit_count=0
+MCTS_VIZ | EVALUATION | TERMINAL_WIN         | iteration=5 move=(3,2,d1,t-1) winner=X value=1.0000
+MCTS_VIZ | BACKPROP   | START                | iteration=5 leaf=(3,2,d1,t-1) raw_value=1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=5 depth_from_leaf=0 move=(3,2,d1,t-1) value_applied=-1.0000 acc_value=-1.0000 visit_count=1 q=-1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=5 depth_from_leaf=1 move=(3,0,d1,t-1) value_applied=1.0000 acc_value=0.9092 visit_count=2 q=0.4546
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=5 depth_from_leaf=2 move=ROOT value_applied=-1.0000 acc_value=2.0908 visit_count=5 q=0.4182
+MCTS_VIZ | BACKPROP   | DONE                 | iteration=5 root_acc=2.0908 root_visits=5 root_q=0.4182
+MCTS_VIZ | SELECTION  | ITERATION_START      | iteration=6
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=6 depth=0 parent=ROOT move=(1,1,d1,t-1) q=-1.0000 u=0.5693 puct=-0.4307 prior=0.3637 child_visits=1 parent_visits=5
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=6 depth=0 parent=ROOT move=(2,3,d1,t-1) q=-1.0000 u=0.2884 puct=-0.7116 prior=0.1843 child_visits=1 parent_visits=5
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=6 depth=0 parent=ROOT move=(3,0,d1,t-1) q=0.4546 u=0.2302 puct=0.6848 prior=0.2206 child_visits=2 parent_visits=5
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=6 depth=0 parent=ROOT move=(3,2,d1,t-1) q=-1.0000 u=0.3622 puct=-0.6378 prior=0.2314 child_visits=1 parent_visits=5
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=6 depth=0 parent=ROOT chosen=(3,0,d1,t-1) winning_puct=0.6848
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=6 depth=0 move=(3,0,d1,t-1) player_after=O
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=6 depth=1 parent=(3,0,d1,t-1) move=(1,1,d1,t-1) q=0.0000 u=0.6756 puct=0.6756 prior=0.3412 child_visits=0 parent_visits=2
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=6 depth=1 parent=(3,0,d1,t-1) move=(2,3,d1,t-1) q=0.0000 u=0.5689 puct=0.5689 prior=0.2873 child_visits=0 parent_visits=2
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=6 depth=1 parent=(3,0,d1,t-1) move=(3,2,d1,t-1) q=-1.0000 u=0.3677 puct=-0.6323 prior=0.3714 child_visits=1 parent_visits=2
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=6 depth=1 parent=(3,0,d1,t-1) chosen=(1,1,d1,t-1) winning_puct=0.6756
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=6 depth=1 move=(1,1,d1,t-1) player_after=X
+MCTS_VIZ | SELECTION  | LEAF_REACHED         | iteration=6 depth=2 move=(1,1,d1,t-1) already_expanded=false visit_count=0
+MCTS_VIZ | EVALUATION | TERMINAL_WIN         | iteration=6 move=(1,1,d1,t-1) winner=X value=1.0000
+MCTS_VIZ | BACKPROP   | START                | iteration=6 leaf=(1,1,d1,t-1) raw_value=1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=6 depth_from_leaf=0 move=(1,1,d1,t-1) value_applied=-1.0000 acc_value=-1.0000 visit_count=1 q=-1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=6 depth_from_leaf=1 move=(3,0,d1,t-1) value_applied=1.0000 acc_value=1.9092 visit_count=3 q=0.6364
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=6 depth_from_leaf=2 move=ROOT value_applied=-1.0000 acc_value=1.0908 visit_count=6 q=0.1818
+MCTS_VIZ | BACKPROP   | DONE                 | iteration=6 root_acc=1.0908 root_visits=6 root_q=0.1818
+MCTS_VIZ | SELECTION  | ITERATION_START      | iteration=7
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=7 depth=0 parent=ROOT move=(1,1,d1,t-1) q=-1.0000 u=0.6237 puct=-0.3763 prior=0.3637 child_visits=1 parent_visits=6
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=7 depth=0 parent=ROOT move=(2,3,d1,t-1) q=-1.0000 u=0.3160 puct=-0.6840 prior=0.1843 child_visits=1 parent_visits=6
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=7 depth=0 parent=ROOT move=(3,0,d1,t-1) q=0.6364 u=0.1891 puct=0.8255 prior=0.2206 child_visits=3 parent_visits=6
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=7 depth=0 parent=ROOT move=(3,2,d1,t-1) q=-1.0000 u=0.3968 puct=-0.6032 prior=0.2314 child_visits=1 parent_visits=6
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=7 depth=0 parent=ROOT chosen=(3,0,d1,t-1) winning_puct=0.8255
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=7 depth=0 move=(3,0,d1,t-1) player_after=O
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=7 depth=1 parent=(3,0,d1,t-1) move=(1,1,d1,t-1) q=-1.0000 u=0.4137 puct=-0.5863 prior=0.3412 child_visits=1 parent_visits=3
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=7 depth=1 parent=(3,0,d1,t-1) move=(2,3,d1,t-1) q=0.0000 u=0.6968 puct=0.6968 prior=0.2873 child_visits=0 parent_visits=3
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=7 depth=1 parent=(3,0,d1,t-1) move=(3,2,d1,t-1) q=-1.0000 u=0.4504 puct=-0.5496 prior=0.3714 child_visits=1 parent_visits=3
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=7 depth=1 parent=(3,0,d1,t-1) chosen=(2,3,d1,t-1) winning_puct=0.6968
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=7 depth=1 move=(2,3,d1,t-1) player_after=X
+MCTS_VIZ | SELECTION  | LEAF_REACHED         | iteration=7 depth=2 move=(2,3,d1,t-1) already_expanded=false visit_count=0
+MCTS_VIZ | EVALUATION | NN_QUERY             | iteration=7 move=(2,3,d1,t-1) player=X
+MCTS_VIZ | EVALUATION | EXPANSION_CHILD      | iteration=7 parent=(2,3,d1,t-1) child_idx=0 move=(1,1,d1,t-1) prior=0.4212 child_player=O
+MCTS_VIZ | EVALUATION | EXPANSION_CHILD      | iteration=7 parent=(2,3,d1,t-1) child_idx=1 move=(3,2,d1,t-1) prior=0.5788 child_player=O
+MCTS_VIZ | EVALUATION | NN_RESULT            | iteration=7 move=(2,3,d1,t-1) nn_value=0.0226 children_created=2
+MCTS_VIZ | BACKPROP   | START                | iteration=7 leaf=(2,3,d1,t-1) raw_value=0.0226
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=7 depth_from_leaf=0 move=(2,3,d1,t-1) value_applied=-0.0226 acc_value=-0.0226 visit_count=1 q=-0.0226
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=7 depth_from_leaf=1 move=(3,0,d1,t-1) value_applied=0.0226 acc_value=1.9318 visit_count=4 q=0.4829
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=7 depth_from_leaf=2 move=ROOT value_applied=-0.0226 acc_value=1.0682 visit_count=7 q=0.1526
+MCTS_VIZ | BACKPROP   | DONE                 | iteration=7 root_acc=1.0682 root_visits=7 root_q=0.1526
+MCTS_VIZ | SELECTION  | ITERATION_START      | iteration=8
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=8 depth=0 parent=ROOT move=(1,1,d1,t-1) q=-1.0000 u=0.6736 puct=-0.3264 prior=0.3637 child_visits=1 parent_visits=7
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=8 depth=0 parent=ROOT move=(2,3,d1,t-1) q=-1.0000 u=0.3413 puct=-0.6587 prior=0.1843 child_visits=1 parent_visits=7
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=8 depth=0 parent=ROOT move=(3,0,d1,t-1) q=0.4829 u=0.1634 puct=0.6464 prior=0.2206 child_visits=4 parent_visits=7
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=8 depth=0 parent=ROOT move=(3,2,d1,t-1) q=-1.0000 u=0.4286 puct=-0.5714 prior=0.2314 child_visits=1 parent_visits=7
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=8 depth=0 parent=ROOT chosen=(3,0,d1,t-1) winning_puct=0.6464
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=8 depth=0 move=(3,0,d1,t-1) player_after=O
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=8 depth=1 parent=(3,0,d1,t-1) move=(1,1,d1,t-1) q=-1.0000 u=0.4777 puct=-0.5223 prior=0.3412 child_visits=1 parent_visits=4
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=8 depth=1 parent=(3,0,d1,t-1) move=(2,3,d1,t-1) q=-0.0226 u=0.4023 puct=0.3797 prior=0.2873 child_visits=1 parent_visits=4
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=8 depth=1 parent=(3,0,d1,t-1) move=(3,2,d1,t-1) q=-1.0000 u=0.5200 puct=-0.4800 prior=0.3714 child_visits=1 parent_visits=4
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=8 depth=1 parent=(3,0,d1,t-1) chosen=(2,3,d1,t-1) winning_puct=0.3797
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=8 depth=1 move=(2,3,d1,t-1) player_after=X
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=8 depth=2 parent=(2,3,d1,t-1) move=(1,1,d1,t-1) q=0.0000 u=0.5897 puct=0.5897 prior=0.4212 child_visits=0 parent_visits=1
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=8 depth=2 parent=(2,3,d1,t-1) move=(3,2,d1,t-1) q=0.0000 u=0.8103 puct=0.8103 prior=0.5788 child_visits=0 parent_visits=1
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=8 depth=2 parent=(2,3,d1,t-1) chosen=(3,2,d1,t-1) winning_puct=0.8103
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=8 depth=2 move=(3,2,d1,t-1) player_after=O
+MCTS_VIZ | SELECTION  | LEAF_REACHED         | iteration=8 depth=3 move=(3,2,d1,t-1) already_expanded=false visit_count=0
+MCTS_VIZ | EVALUATION | TERMINAL_WIN         | iteration=8 move=(3,2,d1,t-1) winner=O value=1.0000
+MCTS_VIZ | BACKPROP   | START                | iteration=8 leaf=(3,2,d1,t-1) raw_value=1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=8 depth_from_leaf=0 move=(3,2,d1,t-1) value_applied=-1.0000 acc_value=-1.0000 visit_count=1 q=-1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=8 depth_from_leaf=1 move=(2,3,d1,t-1) value_applied=1.0000 acc_value=0.9774 visit_count=2 q=0.4887
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=8 depth_from_leaf=2 move=(3,0,d1,t-1) value_applied=-1.0000 acc_value=0.9318 visit_count=5 q=0.1864
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=8 depth_from_leaf=3 move=ROOT value_applied=1.0000 acc_value=2.0682 visit_count=8 q=0.2585
+MCTS_VIZ | BACKPROP   | DONE                 | iteration=8 root_acc=2.0682 root_visits=8 root_q=0.2585
+MCTS_VIZ | SELECTION  | ITERATION_START      | iteration=9
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=9 depth=0 parent=ROOT move=(1,1,d1,t-1) q=-1.0000 u=0.7202 puct=-0.2798 prior=0.3637 child_visits=1 parent_visits=8
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=9 depth=0 parent=ROOT move=(2,3,d1,t-1) q=-1.0000 u=0.3649 puct=-0.6351 prior=0.1843 child_visits=1 parent_visits=8
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=9 depth=0 parent=ROOT move=(3,0,d1,t-1) q=0.1864 u=0.1456 puct=0.3319 prior=0.2206 child_visits=5 parent_visits=8
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=9 depth=0 parent=ROOT move=(3,2,d1,t-1) q=-1.0000 u=0.4582 puct=-0.5418 prior=0.2314 child_visits=1 parent_visits=8
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=9 depth=0 parent=ROOT chosen=(3,0,d1,t-1) winning_puct=0.3319
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=9 depth=0 move=(3,0,d1,t-1) player_after=O
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=9 depth=1 parent=(3,0,d1,t-1) move=(1,1,d1,t-1) q=-1.0000 u=0.5341 puct=-0.4659 prior=0.3412 child_visits=1 parent_visits=5
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=9 depth=1 parent=(3,0,d1,t-1) move=(2,3,d1,t-1) q=0.4887 u=0.2998 puct=0.7885 prior=0.2873 child_visits=2 parent_visits=5
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=9 depth=1 parent=(3,0,d1,t-1) move=(3,2,d1,t-1) q=-1.0000 u=0.5814 puct=-0.4186 prior=0.3714 child_visits=1 parent_visits=5
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=9 depth=1 parent=(3,0,d1,t-1) chosen=(2,3,d1,t-1) winning_puct=0.7885
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=9 depth=1 move=(2,3,d1,t-1) player_after=X
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=9 depth=2 parent=(2,3,d1,t-1) move=(1,1,d1,t-1) q=0.0000 u=0.8339 puct=0.8339 prior=0.4212 child_visits=0 parent_visits=2
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=9 depth=2 parent=(2,3,d1,t-1) move=(3,2,d1,t-1) q=-1.0000 u=0.5730 puct=-0.4270 prior=0.5788 child_visits=1 parent_visits=2
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=9 depth=2 parent=(2,3,d1,t-1) chosen=(1,1,d1,t-1) winning_puct=0.8339
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=9 depth=2 move=(1,1,d1,t-1) player_after=O
+MCTS_VIZ | SELECTION  | LEAF_REACHED         | iteration=9 depth=3 move=(1,1,d1,t-1) already_expanded=false visit_count=0
+MCTS_VIZ | EVALUATION | TERMINAL_WIN         | iteration=9 move=(1,1,d1,t-1) winner=O value=1.0000
+MCTS_VIZ | BACKPROP   | START                | iteration=9 leaf=(1,1,d1,t-1) raw_value=1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=9 depth_from_leaf=0 move=(1,1,d1,t-1) value_applied=-1.0000 acc_value=-1.0000 visit_count=1 q=-1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=9 depth_from_leaf=1 move=(2,3,d1,t-1) value_applied=1.0000 acc_value=1.9774 visit_count=3 q=0.6591
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=9 depth_from_leaf=2 move=(3,0,d1,t-1) value_applied=-1.0000 acc_value=-0.0682 visit_count=6 q=-0.0114
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=9 depth_from_leaf=3 move=ROOT value_applied=1.0000 acc_value=3.0682 visit_count=9 q=0.3409
+MCTS_VIZ | BACKPROP   | DONE                 | iteration=9 root_acc=3.0682 root_visits=9 root_q=0.3409
+MCTS_VIZ | SELECTION  | ITERATION_START      | iteration=10
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=10 depth=0 parent=ROOT move=(1,1,d1,t-1) q=-1.0000 u=0.7638 puct=-0.2362 prior=0.3637 child_visits=1 parent_visits=9
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=10 depth=0 parent=ROOT move=(2,3,d1,t-1) q=-1.0000 u=0.3870 puct=-0.6130 prior=0.1843 child_visits=1 parent_visits=9
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=10 depth=0 parent=ROOT move=(3,0,d1,t-1) q=-0.0114 u=0.1323 puct=0.1210 prior=0.2206 child_visits=6 parent_visits=9
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=10 depth=0 parent=ROOT move=(3,2,d1,t-1) q=-1.0000 u=0.4860 puct=-0.5140 prior=0.2314 child_visits=1 parent_visits=9
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=10 depth=0 parent=ROOT chosen=(3,0,d1,t-1) winning_puct=0.1210
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=10 depth=0 move=(3,0,d1,t-1) player_after=O
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=10 depth=1 parent=(3,0,d1,t-1) move=(1,1,d1,t-1) q=-1.0000 u=0.5851 puct=-0.4149 prior=0.3412 child_visits=1 parent_visits=6
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=10 depth=1 parent=(3,0,d1,t-1) move=(2,3,d1,t-1) q=0.6591 u=0.2463 puct=0.9055 prior=0.2873 child_visits=3 parent_visits=6
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=10 depth=1 parent=(3,0,d1,t-1) move=(3,2,d1,t-1) q=-1.0000 u=0.6369 puct=-0.3631 prior=0.3714 child_visits=1 parent_visits=6
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=10 depth=1 parent=(3,0,d1,t-1) chosen=(2,3,d1,t-1) winning_puct=0.9055
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=10 depth=1 move=(2,3,d1,t-1) player_after=X
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=10 depth=2 parent=(2,3,d1,t-1) move=(1,1,d1,t-1) q=-1.0000 u=0.5107 puct=-0.4893 prior=0.4212 child_visits=1 parent_visits=3
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=10 depth=2 parent=(2,3,d1,t-1) move=(3,2,d1,t-1) q=-1.0000 u=0.7018 puct=-0.2982 prior=0.5788 child_visits=1 parent_visits=3
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=10 depth=2 parent=(2,3,d1,t-1) chosen=(3,2,d1,t-1) winning_puct=-0.2982
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=10 depth=2 move=(3,2,d1,t-1) player_after=O
+MCTS_VIZ | SELECTION  | LEAF_REACHED         | iteration=10 depth=3 move=(3,2,d1,t-1) already_expanded=false visit_count=1
+MCTS_VIZ | EVALUATION | TERMINAL_WIN         | iteration=10 move=(3,2,d1,t-1) winner=O value=1.0000
+MCTS_VIZ | BACKPROP   | START                | iteration=10 leaf=(3,2,d1,t-1) raw_value=1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=10 depth_from_leaf=0 move=(3,2,d1,t-1) value_applied=-1.0000 acc_value=-2.0000 visit_count=2 q=-1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=10 depth_from_leaf=1 move=(2,3,d1,t-1) value_applied=1.0000 acc_value=2.9774 visit_count=4 q=0.7443
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=10 depth_from_leaf=2 move=(3,0,d1,t-1) value_applied=-1.0000 acc_value=-1.0682 visit_count=7 q=-0.1526
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=10 depth_from_leaf=3 move=ROOT value_applied=1.0000 acc_value=4.0682 visit_count=10 q=0.4068
+MCTS_VIZ | BACKPROP   | DONE                 | iteration=10 root_acc=4.0682 root_visits=10 root_q=0.4068
+MCTS_VIZ | SELECTION  | ITERATION_START      | iteration=11
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=11 depth=0 parent=ROOT move=(1,1,d1,t-1) q=-1.0000 u=0.8052 puct=-0.1948 prior=0.3637 child_visits=1 parent_visits=10
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=11 depth=0 parent=ROOT move=(2,3,d1,t-1) q=-1.0000 u=0.4079 puct=-0.5921 prior=0.1843 child_visits=1 parent_visits=10
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=11 depth=0 parent=ROOT move=(3,0,d1,t-1) q=-0.1526 u=0.1221 puct=-0.0305 prior=0.2206 child_visits=7 parent_visits=10
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=11 depth=0 parent=ROOT move=(3,2,d1,t-1) q=-1.0000 u=0.5123 puct=-0.4877 prior=0.2314 child_visits=1 parent_visits=10
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=11 depth=0 parent=ROOT chosen=(3,0,d1,t-1) winning_puct=-0.0305
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=11 depth=0 move=(3,0,d1,t-1) player_after=O
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=11 depth=1 parent=(3,0,d1,t-1) move=(1,1,d1,t-1) q=-1.0000 u=0.6319 puct=-0.3681 prior=0.3412 child_visits=1 parent_visits=7
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=11 depth=1 parent=(3,0,d1,t-1) move=(2,3,d1,t-1) q=0.7443 u=0.2129 puct=0.9572 prior=0.2873 child_visits=4 parent_visits=7
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=11 depth=1 parent=(3,0,d1,t-1) move=(3,2,d1,t-1) q=-1.0000 u=0.6879 puct=-0.3121 prior=0.3714 child_visits=1 parent_visits=7
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=11 depth=1 parent=(3,0,d1,t-1) chosen=(2,3,d1,t-1) winning_puct=0.9572
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=11 depth=1 move=(2,3,d1,t-1) player_after=X
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=11 depth=2 parent=(2,3,d1,t-1) move=(1,1,d1,t-1) q=-1.0000 u=0.5897 puct=-0.4103 prior=0.4212 child_visits=1 parent_visits=4
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=11 depth=2 parent=(2,3,d1,t-1) move=(3,2,d1,t-1) q=-1.0000 u=0.5402 puct=-0.4598 prior=0.5788 child_visits=2 parent_visits=4
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=11 depth=2 parent=(2,3,d1,t-1) chosen=(1,1,d1,t-1) winning_puct=-0.4103
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=11 depth=2 move=(1,1,d1,t-1) player_after=O
+MCTS_VIZ | SELECTION  | LEAF_REACHED         | iteration=11 depth=3 move=(1,1,d1,t-1) already_expanded=false visit_count=1
+MCTS_VIZ | EVALUATION | TERMINAL_WIN         | iteration=11 move=(1,1,d1,t-1) winner=O value=1.0000
+MCTS_VIZ | BACKPROP   | START                | iteration=11 leaf=(1,1,d1,t-1) raw_value=1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=11 depth_from_leaf=0 move=(1,1,d1,t-1) value_applied=-1.0000 acc_value=-2.0000 visit_count=2 q=-1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=11 depth_from_leaf=1 move=(2,3,d1,t-1) value_applied=1.0000 acc_value=3.9774 visit_count=5 q=0.7955
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=11 depth_from_leaf=2 move=(3,0,d1,t-1) value_applied=-1.0000 acc_value=-2.0682 visit_count=8 q=-0.2585
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=11 depth_from_leaf=3 move=ROOT value_applied=1.0000 acc_value=5.0682 visit_count=11 q=0.4607
+MCTS_VIZ | BACKPROP   | DONE                 | iteration=11 root_acc=5.0682 root_visits=11 root_q=0.4607
+MCTS_VIZ | SELECTION  | ITERATION_START      | iteration=12
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=12 depth=0 parent=ROOT move=(1,1,d1,t-1) q=-1.0000 u=0.8445 puct=-0.1555 prior=0.3637 child_visits=1 parent_visits=11
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=12 depth=0 parent=ROOT move=(2,3,d1,t-1) q=-1.0000 u=0.4278 puct=-0.5722 prior=0.1843 child_visits=1 parent_visits=11
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=12 depth=0 parent=ROOT move=(3,0,d1,t-1) q=-0.2585 u=0.1138 puct=-0.1447 prior=0.2206 child_visits=8 parent_visits=11
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=12 depth=0 parent=ROOT move=(3,2,d1,t-1) q=-1.0000 u=0.5373 puct=-0.4627 prior=0.2314 child_visits=1 parent_visits=11
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=12 depth=0 parent=ROOT chosen=(3,0,d1,t-1) winning_puct=-0.1447
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=12 depth=0 move=(3,0,d1,t-1) player_after=O
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=12 depth=1 parent=(3,0,d1,t-1) move=(1,1,d1,t-1) q=-1.0000 u=0.6756 puct=-0.3244 prior=0.3412 child_visits=1 parent_visits=8
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=12 depth=1 parent=(3,0,d1,t-1) move=(2,3,d1,t-1) q=0.7955 u=0.1896 puct=0.9851 prior=0.2873 child_visits=5 parent_visits=8
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=12 depth=1 parent=(3,0,d1,t-1) move=(3,2,d1,t-1) q=-1.0000 u=0.7354 puct=-0.2646 prior=0.3714 child_visits=1 parent_visits=8
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=12 depth=1 parent=(3,0,d1,t-1) chosen=(2,3,d1,t-1) winning_puct=0.9851
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=12 depth=1 move=(2,3,d1,t-1) player_after=X
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=12 depth=2 parent=(2,3,d1,t-1) move=(1,1,d1,t-1) q=-1.0000 u=0.4395 puct=-0.5605 prior=0.4212 child_visits=2 parent_visits=5
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=12 depth=2 parent=(2,3,d1,t-1) move=(3,2,d1,t-1) q=-1.0000 u=0.6040 puct=-0.3960 prior=0.5788 child_visits=2 parent_visits=5
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=12 depth=2 parent=(2,3,d1,t-1) chosen=(3,2,d1,t-1) winning_puct=-0.3960
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=12 depth=2 move=(3,2,d1,t-1) player_after=O
+MCTS_VIZ | SELECTION  | LEAF_REACHED         | iteration=12 depth=3 move=(3,2,d1,t-1) already_expanded=false visit_count=2
+MCTS_VIZ | EVALUATION | TERMINAL_WIN         | iteration=12 move=(3,2,d1,t-1) winner=O value=1.0000
+MCTS_VIZ | BACKPROP   | START                | iteration=12 leaf=(3,2,d1,t-1) raw_value=1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=12 depth_from_leaf=0 move=(3,2,d1,t-1) value_applied=-1.0000 acc_value=-3.0000 visit_count=3 q=-1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=12 depth_from_leaf=1 move=(2,3,d1,t-1) value_applied=1.0000 acc_value=4.9774 visit_count=6 q=0.8296
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=12 depth_from_leaf=2 move=(3,0,d1,t-1) value_applied=-1.0000 acc_value=-3.0682 visit_count=9 q=-0.3409
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=12 depth_from_leaf=3 move=ROOT value_applied=1.0000 acc_value=6.0682 visit_count=12 q=0.5057
+MCTS_VIZ | BACKPROP   | DONE                 | iteration=12 root_acc=6.0682 root_visits=12 root_q=0.5057
+MCTS_VIZ | SELECTION  | ITERATION_START      | iteration=13
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=13 depth=0 parent=ROOT move=(1,1,d1,t-1) q=-1.0000 u=0.8820 puct=-0.1180 prior=0.3637 child_visits=1 parent_visits=12
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=13 depth=0 parent=ROOT move=(2,3,d1,t-1) q=-1.0000 u=0.4468 puct=-0.5532 prior=0.1843 child_visits=1 parent_visits=12
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=13 depth=0 parent=ROOT move=(3,0,d1,t-1) q=-0.3409 u=0.1070 puct=-0.2339 prior=0.2206 child_visits=9 parent_visits=12
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=13 depth=0 parent=ROOT move=(3,2,d1,t-1) q=-1.0000 u=0.5611 puct=-0.4389 prior=0.2314 child_visits=1 parent_visits=12
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=13 depth=0 parent=ROOT chosen=(1,1,d1,t-1) winning_puct=-0.1180
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=13 depth=0 move=(1,1,d1,t-1) player_after=O
+MCTS_VIZ | SELECTION  | LEAF_REACHED         | iteration=13 depth=1 move=(1,1,d1,t-1) already_expanded=false visit_count=1
+MCTS_VIZ | EVALUATION | TERMINAL_WIN         | iteration=13 move=(1,1,d1,t-1) winner=O value=1.0000
+MCTS_VIZ | BACKPROP   | START                | iteration=13 leaf=(1,1,d1,t-1) raw_value=1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=13 depth_from_leaf=0 move=(1,1,d1,t-1) value_applied=-1.0000 acc_value=-2.0000 visit_count=2 q=-1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=13 depth_from_leaf=1 move=ROOT value_applied=1.0000 acc_value=7.0682 visit_count=13 q=0.5437
+MCTS_VIZ | BACKPROP   | DONE                 | iteration=13 root_acc=7.0682 root_visits=13 root_q=0.5437
+MCTS_VIZ | SELECTION  | ITERATION_START      | iteration=14
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=14 depth=0 parent=ROOT move=(1,1,d1,t-1) q=-1.0000 u=0.6120 puct=-0.3880 prior=0.3637 child_visits=2 parent_visits=13
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=14 depth=0 parent=ROOT move=(2,3,d1,t-1) q=-1.0000 u=0.4651 puct=-0.5349 prior=0.1843 child_visits=1 parent_visits=13
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=14 depth=0 parent=ROOT move=(3,0,d1,t-1) q=-0.3409 u=0.1113 puct=-0.2296 prior=0.2206 child_visits=9 parent_visits=13
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=14 depth=0 parent=ROOT move=(3,2,d1,t-1) q=-1.0000 u=0.5841 puct=-0.4159 prior=0.2314 child_visits=1 parent_visits=13
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=14 depth=0 parent=ROOT chosen=(3,0,d1,t-1) winning_puct=-0.2296
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=14 depth=0 move=(3,0,d1,t-1) player_after=O
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=14 depth=1 parent=(3,0,d1,t-1) move=(1,1,d1,t-1) q=-1.0000 u=0.7166 puct=-0.2834 prior=0.3412 child_visits=1 parent_visits=9
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=14 depth=1 parent=(3,0,d1,t-1) move=(2,3,d1,t-1) q=0.8296 u=0.1724 puct=1.0020 prior=0.2873 child_visits=6 parent_visits=9
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=14 depth=1 parent=(3,0,d1,t-1) move=(3,2,d1,t-1) q=-1.0000 u=0.7800 puct=-0.2200 prior=0.3714 child_visits=1 parent_visits=9
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=14 depth=1 parent=(3,0,d1,t-1) chosen=(2,3,d1,t-1) winning_puct=1.0020
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=14 depth=1 move=(2,3,d1,t-1) player_after=X
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=14 depth=2 parent=(2,3,d1,t-1) move=(1,1,d1,t-1) q=-1.0000 u=0.4814 puct=-0.5186 prior=0.4212 child_visits=2 parent_visits=6
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=14 depth=2 parent=(2,3,d1,t-1) move=(3,2,d1,t-1) q=-1.0000 u=0.4962 puct=-0.5038 prior=0.5788 child_visits=3 parent_visits=6
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=14 depth=2 parent=(2,3,d1,t-1) chosen=(3,2,d1,t-1) winning_puct=-0.5038
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=14 depth=2 move=(3,2,d1,t-1) player_after=O
+MCTS_VIZ | SELECTION  | LEAF_REACHED         | iteration=14 depth=3 move=(3,2,d1,t-1) already_expanded=false visit_count=3
+MCTS_VIZ | EVALUATION | TERMINAL_WIN         | iteration=14 move=(3,2,d1,t-1) winner=O value=1.0000
+MCTS_VIZ | BACKPROP   | START                | iteration=14 leaf=(3,2,d1,t-1) raw_value=1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=14 depth_from_leaf=0 move=(3,2,d1,t-1) value_applied=-1.0000 acc_value=-4.0000 visit_count=4 q=-1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=14 depth_from_leaf=1 move=(2,3,d1,t-1) value_applied=1.0000 acc_value=5.9774 visit_count=7 q=0.8539
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=14 depth_from_leaf=2 move=(3,0,d1,t-1) value_applied=-1.0000 acc_value=-4.0682 visit_count=10 q=-0.4068
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=14 depth_from_leaf=3 move=ROOT value_applied=1.0000 acc_value=8.0682 visit_count=14 q=0.5763
+MCTS_VIZ | BACKPROP   | DONE                 | iteration=14 root_acc=8.0682 root_visits=14 root_q=0.5763
+MCTS_VIZ | SELECTION  | ITERATION_START      | iteration=99
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=99 depth=0 parent=ROOT move=(1,1,d1,t-1) q=-1.0000 u=0.1939 puct=-0.8061 prior=0.3637 child_visits=25 parent_visits=98
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=99 depth=0 parent=ROOT move=(2,3,d1,t-1) q=-1.0000 u=0.1965 puct=-0.8035 prior=0.1843 child_visits=12 parent_visits=98
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=99 depth=0 parent=ROOT move=(3,0,d1,t-1) q=-0.8682 u=0.0665 puct=-0.8017 prior=0.2206 child_visits=45 parent_visits=98
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=99 depth=0 parent=ROOT move=(3,2,d1,t-1) q=-1.0000 u=0.1887 puct=-0.8113 prior=0.2314 child_visits=16 parent_visits=98
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=99 depth=0 parent=ROOT chosen=(3,0,d1,t-1) winning_puct=-0.8017
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=99 depth=0 move=(3,0,d1,t-1) player_after=O
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=99 depth=1 parent=(3,0,d1,t-1) move=(1,1,d1,t-1) q=-1.0000 u=1.6023 puct=0.6023 prior=0.3412 child_visits=1 parent_visits=45
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=99 depth=1 parent=(3,0,d1,t-1) move=(2,3,d1,t-1) q=0.9757 u=0.0628 puct=1.0384 prior=0.2873 child_visits=42 parent_visits=45
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=99 depth=1 parent=(3,0,d1,t-1) move=(3,2,d1,t-1) q=-1.0000 u=1.7442 puct=0.7442 prior=0.3714 child_visits=1 parent_visits=45
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=99 depth=1 parent=(3,0,d1,t-1) chosen=(2,3,d1,t-1) winning_puct=1.0384
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=99 depth=1 move=(2,3,d1,t-1) player_after=X
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=99 depth=2 parent=(2,3,d1,t-1) move=(1,1,d1,t-1) q=-1.0000 u=0.2123 puct=-0.7877 prior=0.4212 child_visits=17 parent_visits=42
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=99 depth=2 parent=(2,3,d1,t-1) move=(3,2,d1,t-1) q=-1.0000 u=0.2101 puct=-0.7899 prior=0.5788 child_visits=24 parent_visits=42
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=99 depth=2 parent=(2,3,d1,t-1) chosen=(1,1,d1,t-1) winning_puct=-0.7877
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=99 depth=2 move=(1,1,d1,t-1) player_after=O
+MCTS_VIZ | SELECTION  | LEAF_REACHED         | iteration=99 depth=3 move=(1,1,d1,t-1) already_expanded=false visit_count=17
+MCTS_VIZ | EVALUATION | TERMINAL_WIN         | iteration=99 move=(1,1,d1,t-1) winner=O value=1.0000
+MCTS_VIZ | BACKPROP   | START                | iteration=99 leaf=(1,1,d1,t-1) raw_value=1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=99 depth_from_leaf=0 move=(1,1,d1,t-1) value_applied=-1.0000 acc_value=-18.0000 visit_count=18 q=-1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=99 depth_from_leaf=1 move=(2,3,d1,t-1) value_applied=1.0000 acc_value=41.9774 visit_count=43 q=0.9762
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=99 depth_from_leaf=2 move=(3,0,d1,t-1) value_applied=-1.0000 acc_value=-40.0682 visit_count=46 q=-0.8710
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=99 depth_from_leaf=3 move=ROOT value_applied=1.0000 acc_value=93.0682 visit_count=99 q=0.9401
+MCTS_VIZ | BACKPROP   | DONE                 | iteration=99 root_acc=93.0682 root_visits=99 root_q=0.9401
+MCTS_VIZ | SELECTION  | ITERATION_START      | iteration=100
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=100 depth=0 parent=ROOT move=(1,1,d1,t-1) q=-1.0000 u=0.1949 puct=-0.8051 prior=0.3637 child_visits=25 parent_visits=99
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=100 depth=0 parent=ROOT move=(2,3,d1,t-1) q=-1.0000 u=0.1975 puct=-0.8025 prior=0.1843 child_visits=12 parent_visits=99
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=100 depth=0 parent=ROOT move=(3,0,d1,t-1) q=-0.8710 u=0.0654 puct=-0.8057 prior=0.2206 child_visits=46 parent_visits=99
+MCTS_VIZ | SELECTION  | PUCT_CANDIDATE       | iteration=100 depth=0 parent=ROOT move=(3,2,d1,t-1) q=-1.0000 u=0.1896 puct=-0.8104 prior=0.2314 child_visits=16 parent_visits=99
+MCTS_VIZ | SELECTION  | LEVEL_DECISION       | iteration=100 depth=0 parent=ROOT chosen=(2,3,d1,t-1) winning_puct=-0.8025
+MCTS_VIZ | SELECTION  | MOVE_APPLIED         | iteration=100 depth=0 move=(2,3,d1,t-1) player_after=O
+MCTS_VIZ | SELECTION  | LEAF_REACHED         | iteration=100 depth=1 move=(2,3,d1,t-1) already_expanded=false visit_count=12
+MCTS_VIZ | EVALUATION | TERMINAL_WIN         | iteration=100 move=(2,3,d1,t-1) winner=O value=1.0000
+MCTS_VIZ | BACKPROP   | START                | iteration=100 leaf=(2,3,d1,t-1) raw_value=1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=100 depth_from_leaf=0 move=(2,3,d1,t-1) value_applied=-1.0000 acc_value=-13.0000 visit_count=13 q=-1.0000
+MCTS_VIZ | BACKPROP   | STEP                 | iteration=100 depth_from_leaf=1 move=ROOT value_applied=1.0000 acc_value=94.0682 visit_count=100 q=0.9407
+MCTS_VIZ | BACKPROP   | DONE                 | iteration=100 root_acc=94.0682 root_visits=100 root_q=0.9407
+MCTS_VIZ | FINAL      | ROOT_CHILD_STAT      | move_idx=1 rank=0 move=(3,0,d1,t-1) visit_count=46 q=-0.8710 prior=0.2206 policy_prob=0.4600
+MCTS_VIZ | FINAL      | ROOT_CHILD_STAT      | move_idx=1 rank=1 move=(1,1,d1,t-1) visit_count=25 q=-1.0000 prior=0.3637 policy_prob=0.2500
+MCTS_VIZ | FINAL      | ROOT_CHILD_STAT      | move_idx=1 rank=2 move=(3,2,d1,t-1) visit_count=16 q=-1.0000 prior=0.2314 policy_prob=0.1600
+MCTS_VIZ | FINAL      | ROOT_CHILD_STAT      | move_idx=1 rank=3 move=(2,3,d1,t-1) visit_count=13 q=-1.0000 prior=0.1843 policy_prob=0.1300
+MCTS_VIZ | FINAL      | DECISION             | move_idx=1 move=(3,0,d1,t-1) visit_count=46 q=-0.8710 temperature=0.1000 selection_mode=sampled
+MCTS_VIZ | FINAL      | SEARCH_END           | move_idx=1 total_iterations_run=100`;
 
 /* ─────────────────────────────────────────────────────────────────────────────
    LOG PARSER

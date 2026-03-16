@@ -122,17 +122,17 @@ img {
 ---
 
 # Selfplay Component
-<a href="html/selfplay-viewer.html">Open AB page</a>
+<a href="html/selfplay-viewer.html">Open self-play animation</a>
 
 ---
 
 # MCTS Algorithm
-<a href="html/mcts-algorithm.html">Open AB page</a>
+<a href="html/mcts-algorithm.html">Open MCTS vizualizer</a>
 
 ---
 
 # Inference Component
-<a href="html/inference-component.html">Open AB page</a>
+<a href="html/inference-component.html">Open Inference viewer</a>
 
 ---
 
