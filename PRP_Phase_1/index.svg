@@ -1,0 +1,117 @@
+<svg viewBox="0 0 1400 800" xmlns="http://www.w3.org/2000/svg">
+  <!-- Title -->
+  <text x="700" y="40" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#2D3748" text-anchor="middle">
+    Data-Driven Methodology for Advancing HVAC Systems
+  </text>
+  
+  <!-- 1. Data Collection -->
+  <g id="data-collection">
+    <rect x="50" y="100" width="180" height="140" rx="8" fill="#EDF2F7" stroke="#4A5568" stroke-width="2"/>
+    <text x="140" y="125" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#2D3748" text-anchor="middle">Data Collection</text>
+    
+    <!-- Sensor icons -->
+    <circle cx="100" cy="160" r="15" fill="none" stroke="#3182CE" stroke-width="2"/>
+    <path d="M 95 160 Q 85 150 80 160" fill="none" stroke="#3182CE" stroke-width="2"/>
+    <path d="M 105 160 Q 115 150 120 160" fill="none" stroke="#3182CE" stroke-width="2"/>
+    
+    <circle cx="180" cy="160" r="15" fill="none" stroke="#3182CE" stroke-width="2"/>
+    <path d="M 175 160 Q 165 150 160 160" fill="none" stroke="#3182CE" stroke-width="2"/>
+    <path d="M 185 160 Q 195 150 200 160" fill="none" stroke="#3182CE" stroke-width="2"/>
+    
+    <!-- Building icon -->
+    <rect x="120" y="190" width="40" height="30" fill="#718096"/>
+    <polygon points="140,180 115,195 165,195" fill="#4A5568"/>
+    
+    <text x="140" y="235" font-family="Arial, sans-serif" font-size="10" fill="#4A5568" text-anchor="middle">Sensor Data</text>
+  </g>
+  
+  <!-- Arrow 1 -->
+  <path d="M 230 170 L 280 170" stroke="#4A5568" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+  
+  <!-- 2. System Identification (SINDy) -->
+  <g id="sindy">
+    <rect x="280" y="100" width="180" height="140" rx="8" fill="#E6FFFA" stroke="#319795" stroke-width="2"/>
+    <text x="370" y="125" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#2D3748" text-anchor="middle">System Identification</text>
+    <text x="370" y="142" font-family="Arial, sans-serif" font-size="12" fill="#2C7A7B" text-anchor="middle">(SINDy)</text>
+    
+    <!-- Model representation -->
+    <rect x="310" y="160" width="120" height="60" rx="4" fill="#B2F5EA" stroke="#319795" stroke-width="1.5"/>
+    <text x="370" y="185" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#234E52" text-anchor="middle">Sparse Nonlinear</text>
+    <text x="370" y="200" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#234E52" text-anchor="middle">Model</text>
+    <text x="370" y="215" font-family="Arial, sans-serif" font-size="10" fill="#2C7A7B" text-anchor="middle">Learning Dynamics</text>
+  </g>
+  
+  <!-- Arrow 2 -->
+  <path d="M 460 170 L 510 170" stroke="#4A5568" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+  
+  <!-- 3. RL Controller (Offline in Surrogate Gym) -->
+  <g id="rl-controller">
+    <rect x="510" y="100" width="200" height="140" rx="8" fill="#FEF5E7" stroke="#D97706" stroke-width="2"/>
+    <text x="610" y="125" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#2D3748" text-anchor="middle">RL Controller</text>
+    <text x="610" y="142" font-family="Arial, sans-serif" font-size="12" fill="#92400E" text-anchor="middle">(Offline Training)</text>
+    
+    <!-- Neural network icon -->
+    <g transform="translate(570, 160)">
+      <circle cx="0" cy="10" r="6" fill="#F59E0B"/>
+      <circle cx="0" cy="30" r="6" fill="#F59E0B"/>
+      <circle cx="0" cy="50" r="6" fill="#F59E0B"/>
+      <circle cx="30" cy="15" r="6" fill="#F59E0B"/>
+      <circle cx="30" cy="30" r="6" fill="#F59E0B"/>
+      <circle cx="30" cy="45" r="6" fill="#F59E0B"/>
+      <circle cx="60" cy="20" r="6" fill="#F59E0B"/>
+      <circle cx="60" cy="40" r="6" fill="#F59E0B"/>
+      <line x1="6" y1="10" x2="24" y2="15" stroke="#D97706" stroke-width="1"/>
+      <line x1="6" y1="10" x2="24" y2="30" stroke="#D97706" stroke-width="1"/>
+      <line x1="6" y1="30" x2="24" y2="30" stroke="#D97706" stroke-width="1"/>
+      <line x1="6" y1="50" x2="24" y2="45" stroke="#D97706" stroke-width="1"/>
+      <line x1="36" y1="15" x2="54" y2="20" stroke="#D97706" stroke-width="1"/>
+      <line x1="36" y1="30" x2="54" y2="20" stroke="#D97706" stroke-width="1"/>
+      <line x1="36" y1="45" x2="54" y2="40" stroke="#D97706" stroke-width="1"/>
+    </g>
+    
+    <text x="610" y="225" font-family="Arial, sans-serif" font-size="10" fill="#B45309" text-anchor="middle">Surrogate Gym</text>
+  </g>
+  
+  <!-- Arrow 3 -->
+  <path d="M 710 170 L 760 170" stroke="#4A5568" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+  
+  <!-- 4. Validate in Offline Environment -->
+  <g id="offline-validation">
+    <rect x="760" y="100" width="180" height="140" rx="8" fill="#E0E7FF" stroke="#5B21B6" stroke-width="2"/>
+    <text x="850" y="125" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#2D3748" text-anchor="middle">Offline</text>
+    <text x="850" y="142" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#2D3748" text-anchor="middle">Environment</text>
+    <text x="850" y="159" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#2D3748" text-anchor="middle">Validation</text>
+    
+    <rect x="785" y="175" width="130" height="50" rx="4" fill="#C7D2FE" stroke="#5B21B6" stroke-width="1.5"/>
+    <text x="850" y="195" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#4C1D95" text-anchor="middle">Simulated</text>
+    <text x="850" y="210" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#4C1D95" text-anchor="middle">HVAC Testing</text>
+  </g>
+  
+  <!-- Arrow 4 -->
+  <path d="M 940 170 L 990 170" stroke="#4A5568" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+  
+  <!-- 5. Physical Testbed (Dollhouse) -->
+  <g id="dollhouse">
+    <rect x="990" y="100" width="200" height="140" rx="8" fill="#FCE7F3" stroke="#BE185D" stroke-width="2"/>
+    <text x="1090" y="125" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#2D3748" text-anchor="middle">Physical Testbed</text>
+    <text x="1090" y="142" font-family="Arial, sans-serif" font-size="12" fill="#9F1239" text-anchor="middle">Validation</text>
+    
+    <!-- House icon -->
+    <g transform="translate(1040, 160)">
+      <polygon points="50,0 10,30 90,30" fill="#BE185D"/>
+      <rect x="20" y="30" width="60" height="50" fill="#DB2777"/>
+      <rect x="35" y="55" width="15" height="25" fill="#9F1239"/>
+      <rect x="55" y="40" width="12" height="12" fill="#F9A8D4"/>
+      <rect x="33" y="40" width="12" height="12" fill="#F9A8D4"/>
+    </g>
+    
+    <text x="1090" y="255" font-family="Arial, sans-serif" font-size="10" fill="#9F1239" text-anchor="middle">Dollhouse Platform</text>
+  </g>
+  
+
+  
+  
+ 
+  
+  
+</svg>

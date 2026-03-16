@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Self-Play Component</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --font-primary: 'Calibri', 'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'Fira Code', 'SF Mono', 'Monaco', 'Consolas', monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#f1f3f4;font-family:var(--font-primary);}
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes popIn{0%{transform:scale(0.5);opacity:0}65%{transform:scale(1.08)}100%{transform:scale(1);opacity:1}}
+@keyframes pulseRing{0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,0.4)}50%{box-shadow:0 0 0 6px rgba(245,158,11,0)}}
+@keyframes zFlash{0%{background:#fef9c3}100%{background:inherit}}
+@keyframes bufferPop{0%{transform:scale(0) translateY(8px);opacity:0}70%{transform:scale(1.06) translateY(-2px)}100%{transform:scale(1) translateY(0);opacity:1}}
+::-webkit-scrollbar{height:5px;width:5px}
+::-webkit-scrollbar-track{background:#f1f5f9}
+::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}
+button{cursor:pointer;}
+button:disabled{cursor:not-allowed;}
+input[type=range]{cursor:pointer;}
+</style>
+</head>
+<body>
+<div id="app" style="min-height:100vh;background:#f1f3f4;padding:16px 20px 32px;position:relative;"></div>
+
+<script>
+// ── Phase meta ──────────────────────────────────────────────────────────────
+const PM = {
+  GAME_START:      { color:'#6366f1', bg:'#eef2ff', icon:'⬡', label:'INIT BOARD' },
+  MCTS_DONE:       { color:'#8b5cf6', bg:'#f5f3ff', icon:'⊛', label:'MCTS DONE' },
+  POSITION_LOGGED: { color:'#10b981', bg:'#ecfdf5', icon:'⊕', label:'LOG POSITION' },
+  MOVE_APPLIED:    { color:'#f59e0b', bg:'#fffbeb', icon:'◎', label:'MOVE APPLIED' },
+  UPDATE_Z:        { color:'#f97316', bg:'#fff7ed', icon:'⟳', label:'UPDATE z' },
+  FLUSH:           { color:'#ef4444', bg:'#fef2f2', icon:'⇢', label:'FLUSH → BUFFER' },
+};
+
+// ── Parser ──────────────────────────────────────────────────────────────────
+function parseKV(fields) {
+  const out = {};
+  const mhMatch = fields.match(/move_history=(.+?)(?= \w+=|$)/);
+  if (mhMatch) {
+    out.move_history = mhMatch[1].trim();
+    fields = fields.replace(/move_history=.+?(?= \w+=|$)/, '');
+  }
+  const re = /(\w+)=((?:[^\s=]+(?:,[\d.]+)*)|(?:[^=\s]+(?:;[^=\s]+)*))/g;
+  let m;
+  while ((m = re.exec(fields)) !== null) {
+    const k = m[1], v = m[2];
+    if (v.includes(','))      out[k] = v.split(',').map(Number);
+    else if (v.includes(';')) out[k] = v.split(';').map(s => { const [t,z]=s.split(':'); return {t:parseInt(t),z:parseFloat(z)}; });
+    else if (!isNaN(Number(v))) out[k] = Number(v);
+    else                      out[k] = v;
+  }
+  return out;
+}
+
+function parseLine(line) {
+  const parts = line.split(' | ');
+  if (parts.length < 3) return null;
+  return { phase: parts[0].trim(), event: parts[1].trim(), ...parseKV(parts.slice(2).join(' | ').trim()) };
+}
+
+function buildSteps(lines) {
+  const steps = [];
+  let poolEntries = [];
+  let pendingMCTS = null;
+  let pendingPos  = null;
+  let zMap        = {};
+  let sharedBuffer = [];
+
+  const parsed = lines.map(parseLine).filter(Boolean);
+
+  for (const r of parsed) {
+    if (r.event === 'GAME_END' && Array.isArray(r.z))
+      for (const {t,z} of r.z) zMap[t] = z;
+  }
+
+  const raw = [];
+
+  for (const r of parsed) {
+    switch (r.event) {
+      case 'GAME_START':
+        poolEntries  = [];
+        sharedBuffer = [];
+        raw.push({
+          phase:'GAME_START', board:r.board, policy:null, mask:null, chosenAction:null,
+          pool:[], sharedBuffer:[], move:null, player:null, temp:null,
+          gameId:r.game_id,
+          nextDesc:`Initialise board · game_id=${r.game_id} · mode=${r.mode}`,
+        });
+        break;
+
+      case 'MCTS_DONE':
+        pendingMCTS = r;
+        raw.push({
+          phase:'MCTS_DONE',
+          board: raw.length ? raw[raw.length-1].board : '................',
+          policy:r.policy, mask:null, chosenAction:r.action_idx,
+          pool:poolEntries.map(e=>({...e})), sharedBuffer:[...sharedBuffer],
+          move:r.move, player:r.player, temp:r.temp,
+          nextDesc:`Run MCTS · move ${r.move} · player ${r.player} · τ=${r.temp} · chose cell ${r.action_idx}`,
+        });
+        break;
+
+      case 'POSITION_LOGGED': {
+        pendingPos = r;
+        const mctsSnap = raw[raw.length - 1];
+        if (mctsSnap && mctsSnap.phase === 'MCTS_DONE') mctsSnap.mask = r.mask;
+        const entry = {
+          board:r.board, planes:r.planes, policy:r.policy, mask:r.mask,
+          action:pendingMCTS ? pendingMCTS.action_idx : null,
+          player:r.player, move:r.move, z:0,
+        };
+        const newPool = [...poolEntries, entry];
+        poolEntries = newPool;
+        raw.push({
+          phase:'POSITION_LOGGED', board:r.board, policy:r.policy, mask:r.mask,
+          chosenAction:pendingMCTS ? pendingMCTS.action_idx : null,
+          pool:newPool.map(e=>({...e})), sharedBuffer:[...sharedBuffer],
+          move:r.move, player:r.player, temp:pendingMCTS?.temp,
+          poolSize:r.pool_size,
+          nextDesc:`Log position · t=${r.move} · (board, π, mask, z=0) added to pool · pool_size=${r.pool_size}`,
+        });
+        break;
+      }
+
+      case 'MOVE_APPLIED': {
+        const prevPlayer = pendingMCTS?.player ?? (raw.length ? raw[raw.length-1].player : null);
+        raw.push({
+          phase:'MOVE_APPLIED', board:r.board,
+          policy:pendingPos?.policy ?? null, mask:pendingPos?.mask ?? null,
+          chosenAction:pendingMCTS ? pendingMCTS.action_idx : null,
+          pool:poolEntries.map(e=>({...e})), sharedBuffer:[...sharedBuffer],
+          move:r.move, player:prevPlayer, temp:null,
+          moveStr:r.move_str, nextIdx:r.next_idx,
+          nextDesc:`Apply move ${r.move_str} → board="${r.board}" · next player idx=${r.next_idx}`,
+        });
+        pendingMCTS = null;
+        pendingPos  = null;
+        break;
+      }
+
+      case 'GAME_END': {
+        const updatedPool = poolEntries.map(e => ({
+          ...e, z: zMap.hasOwnProperty(e.move) ? zMap[e.move] : 0, zUpdated:true,
+        }));
+        raw.push({
+          phase:'UPDATE_Z', board:r.board, policy:null, mask:null, chosenAction:null,
+          pool:updatedPool.map(e=>({...e})), sharedBuffer:[...sharedBuffer],
+          move:null, player:null, temp:null,
+          winner:r.winner, totalMoves:r.total_moves, moveHistory:r.move_history,
+          nextDesc:`Game over · winner=${r.winner} · Assign z to all ${updatedPool.length} positions from outcome`,
+        });
+        const flushedBuffer = [...sharedBuffer, ...updatedPool];
+        raw.push({
+          phase:'FLUSH', board:r.board, policy:null, mask:null, chosenAction:null,
+          pool:[], sharedBuffer:flushedBuffer,
+          move:null, player:null, temp:null,
+          winner:r.winner, totalMoves:r.total_moves, moveHistory:r.move_history,
+          nextDesc:`Flush ${updatedPool.length} positions to shared memory buffer · clear pool`,
+        });
+        sharedBuffer = flushedBuffer;
+        break;
+      }
+
+      default: break;
+    }
+  }
+
+  for (let i = 0; i < raw.length; i++) {
+    const cur  = raw[i];
+    const prev = i > 0 ? raw[i - 1] : null;
+    const isPolicyStep = cur.phase === 'MCTS_DONE' || cur.phase === 'POSITION_LOGGED';
+    const isUpdateZ    = cur.phase === 'UPDATE_Z';
+    const isFlush      = cur.phase === 'FLUSH';
+
+    steps.push({
+      phase:        cur.phase,
+      board:        prev ? prev.board : cur.board,
+      pool:         isUpdateZ ? cur.pool         : (prev ? prev.pool         : []),
+      sharedBuffer: isFlush   ? cur.sharedBuffer : (prev ? prev.sharedBuffer : []),
+      policy:       isPolicyStep ? cur.policy       : (prev ? prev.policy       : null),
+      mask:         isPolicyStep ? cur.mask         : (prev ? prev.mask         : null),
+      chosenAction: isPolicyStep ? cur.chosenAction : (prev ? prev.chosenAction : null),
+      move:cur.move, player:cur.player, temp:cur.temp,
+      gameId:cur.gameId, winner:cur.winner, totalMoves:cur.totalMoves,
+      moveHistory:cur.moveHistory, moveStr:cur.moveStr, nextIdx:cur.nextIdx,
+      poolSize:cur.poolSize,
+      desc:`▶ Next: ${cur.nextDesc}`,
+    });
+  }
+
+  return steps;
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+function parseBoardString(s) {
+  if (!s || s.length !== 16) return Array(16).fill(0);
+  return s.split('').map(c => c==='X' ? 1 : c==='O' ? -1 : 0);
+}
+
+function findNextMoveApplied(steps, fromIdx) {
+  for (let i = fromIdx + 1; i < steps.length; i++) {
+    if (steps[i].phase === 'MOVE_APPLIED' || steps[i].phase === 'UPDATE_Z' || steps[i].phase === 'FLUSH') return i;
+  }
+  return steps.length - 1;
+}
+
+function findPrevMoveApplied(steps, fromIdx) {
+  for (let i = fromIdx - 1; i >= 0; i--) {
+    if (steps[i].phase === 'MCTS_DONE' || steps[i].phase === 'GAME_START') return i;
+  }
+  return 0;
+}
+
+// ── SVG Board ───────────────────────────────────────────────────────────────
+function makeBoardSVG(boardStr, policy, mask, chosenAction, player, size=220) {
+  const cells = parseBoardString(boardStr);
+  const N = 4, cell = size / N, pad = 3;
+  const validPolicies = policy ? policy.filter((p,i) => mask && mask[i] > 0.5) : [];
+  const maxPi = validPolicies.length ? Math.max(...validPolicies) : 1;
+  const ringColor = player === 'O' ? '#dc2626' : '#1d4ed8';
+
+  let inner = `
+    <defs>
+      <radialGradient id="gx" cx="50%" cy="35%" r="60%">
+        <stop offset="0%" stop-color="#93c5fd"/><stop offset="100%" stop-color="#1d4ed8"/>
+      </radialGradient>
+      <radialGradient id="go" cx="50%" cy="35%" r="60%">
+        <stop offset="0%" stop-color="#fca5a5"/><stop offset="100%" stop-color="#b91c1c"/>
+      </radialGradient>
+      <filter id="glow">
+        <feGaussianBlur stdDeviation="2.5" result="b"/>
+        <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+    </defs>`;
+
+  cells.forEach((v, i) => {
+    const cx = (i%N)*cell + cell/2, cy = Math.floor(i/N)*cell + cell/2;
+    const x  = (i%N)*cell + pad,   y  = Math.floor(i/N)*cell + pad;
+    const w  = cell - pad*2;
+    const isChosen = chosenAction === i;
+    const pi   = policy ? policy[i] : 0;
+    const piN  = maxPi > 0 ? pi/maxPi : 0;
+    const isValid = mask && mask[i] > 0.5;
+    const isEmpty = v === 0;
+
+    let fillColor;
+    if (isEmpty) {
+      if (isValid) {
+        const alpha = (0.04+piN*0.14).toFixed(3);
+        fillColor = `rgba(99,102,241,${alpha})`;
+      } else {
+        fillColor = '#f8fafc';
+      }
+    } else {
+      fillColor = '#fff';
+    }
+    const strokeColor = (isValid && isEmpty && !isChosen) ? `rgba(99,102,241,${(0.2+piN*0.5).toFixed(2)})` : '#e2e8f0';
+
+    inner += `<rect x="${x}" y="${y}" width="${w}" height="${w}" rx="5"
+      fill="${fillColor}" stroke="${strokeColor}" stroke-width="1"/>`;
+
+    if (isEmpty && isValid && pi > 0) {
+      const barFill = isChosen ? ringColor : '#6366f1';
+      inner += `<rect x="${x}" y="${y+w-4}" width="${w*piN}" height="4" rx="2" fill="${barFill}" opacity="0.75"/>`;
+    }
+
+    if (v !== 0) {
+      const gid = v===1 ? 'url(#gx)' : 'url(#go)';
+      const filt = isChosen ? 'url(#glow)' : '';
+      inner += `<circle cx="${cx}" cy="${cy}" r="${cell*0.28}" fill="${gid}" ${filt?`filter="${filt}"`:''} style="animation:popIn 0.3s ease"/>`;
+    }
+
+    if (isChosen && isEmpty) {
+      inner += `<circle cx="${cx}" cy="${cy}" r="${cell*0.27}" fill="none"
+        stroke="${ringColor}" stroke-width="2.5" stroke-dasharray="3 2" opacity="0.9"/>`;
+    }
+
+    if (isEmpty && isValid && pi > 0.04) {
+      const pct = (pi*100).toFixed(0);
+      const txtColor = isChosen ? ringColor : '#6366f1';
+      inner += `<text x="${cx}" y="${cy-3}" text-anchor="middle" font-size="10"
+        font-family="var(--font-mono)" fill="${txtColor}" font-weight="500" opacity="0.9">${pct}%</text>`;
+    }
+
+    inner += `<text x="${x+3}" y="${y+9}" font-size="10" font-family="monospace" fill="#d1d5db" opacity="0.6">${i}</text>`;
+  });
+
+  return `<svg width="${size}" height="${size}" style="display:block;animation:fadeUp 0.3s ease">${inner}</svg>`;
+}
+
+// ── Policy Bars SVG ─────────────────────────────────────────────────────────
+function makePolicyBarsSVG(policy, mask, chosen, player, width=340, height=64) {
+  if (!policy) return `<div style="height:${height}px;display:flex;align-items:center;justify-content:center;color:#d1d5db;font-family:var(--font-mono);font-size:13px;">— no policy —</div>`;
+  const valid = policy.map((p,i) => (mask && mask[i]>0.5) ? p : 0);
+  const chosenColor = player === 'O' ? '#dc2626' : '#1d4ed8';
+  const chosenLabel = player === 'O' ? '#b91c1c' : '#1d4ed8';
+  const max = Math.max(...valid, 0.001);
+  const bw = (width - (policy.length-1)*2) / policy.length;
+  let inner = '';
+  policy.forEach((_,i) => {
+    const bh = (valid[i]/max)*(height-18);
+    const isC = i===chosen;
+    const fill = isC ? chosenColor : valid[i]>0 ? '#6366f1' : '#e2e8f0';
+    const opac = isC ? 1 : valid[i]>0 ? 0.55 : 0.25;
+    inner += `<rect x="${i*(bw+2)}" y="${height-bh-16}" width="${bw}" height="${Math.max(bh,0)}" rx="2"
+      fill="${fill}" opacity="${opac}"/>`;
+    if (isC && valid[i]>0.03) {
+      inner += `<text x="${i*(bw+2)+bw/2}" y="${height-bh-19}" text-anchor="middle"
+        font-size="9" font-family="var(--font-mono)" fill="${chosenLabel}" font-weight="500">${(valid[i]*100).toFixed(1)}%</text>`;
+    }
+    const lblColor = isC ? chosenLabel : '#94a3b8';
+    inner += `<text x="${i*(bw+2)+bw/2}" y="${height-3}" text-anchor="middle"
+      font-size="10" font-family="var(--font-mono)" fill="${lblColor}">${i}</text>`;
+  });
+  return `<svg width="${width}" height="${height}">${inner}</svg>`;
+}
+
+// ── Pool mini-card ──────────────────────────────────────────────────────────
+function makePoolEntry(entry, isNewest, zUpdated) {
+  const cells = parseBoardString(entry.board);
+  const cs = 8;
+  const z   = entry.z;
+  const zIsZero = z === 0;
+  const zIsPos  = typeof z==='number' && z > 0;
+  const zIsNeg  = typeof z==='number' && z < 0;
+  const zColor  = zIsPos ? '#059669' : zIsNeg ? '#dc2626' : '#94a3b8';
+  const zBg     = zIsPos ? '#ecfdf5' : zIsNeg ? '#fef2f2' : '#f8fafc';
+  const zBorder = zIsPos ? '#a7f3d0' : zIsNeg ? '#fecaca' : '#e2e8f0';
+  const zLabel  = zIsZero ? 'z=0' : `z=${zIsPos?'+':''}${z.toFixed(1)}`;
+  const showZ   = zUpdated && !zIsZero;
+
+  let rects = '';
+  cells.forEach((v, i) => {
+    let fill;
+    if (v===1) fill='#3b82f6';
+    else if (v===-1) fill='#ef4444';
+    else if (entry.mask && entry.mask[i]>0.5) fill='#eff6ff';
+    else fill='#f8fafc';
+    rects += `<rect x="${(i%4)*cs+1}" y="${Math.floor(i/4)*cs+1}" width="${cs-1}" height="${cs-1}" rx="1" fill="${fill}"/>`;
+  });
+
+  let actionRect = '';
+  if (entry.action !== null && entry.action !== undefined) {
+    const sc = entry.player==='O' ? '#dc2626' : '#1d4ed8';
+    actionRect = `<rect x="${(entry.action%4)*cs+1}" y="${Math.floor(entry.action/4)*cs+1}"
+      width="${cs-1}" height="${cs-1}" rx="1" fill="none" stroke="${sc}" stroke-width="2"/>`;
+  }
+
+  const svgBorder = isNewest ? '2px solid #6366f1' : `1.5px solid ${zBorder}`;
+  const zBorderStyle = showZ ? `1px solid ${zBorder}` : '1px solid #e2e8f0';
+  const zFontColor = showZ ? zColor : '#94a3b8';
+  const zBgStyle = showZ ? zBg : '#f8fafc';
+  const zAnim = showZ ? 'zFlash 0.8s ease' : 'none';
+
+  return `<div style="display:flex;flex-direction:column;align-items:center;gap:3px;animation:${isNewest?'popIn 0.45s ease forwards':'none'}">
+    <div style="font-size:13px;font-family:var(--font-mono);color:#94a3b8;background:#f1f5f9;border-radius:3px;padding:1px 5px;">t=${entry.move}</div>
+    <svg width="${cs*4+2}" height="${cs*4+2}" style="border-radius:4px;box-shadow:0 0 0 ${svgBorder}">
+      ${rects}${actionRect}
+    </svg>
+    <div style="font-size:14px;font-family:var(--font-mono);font-weight:500;color:${zFontColor};background:${zBgStyle};border:${zBorderStyle};border-radius:4px;padding:1px 6px;transition:all 0.5s ease;animation:${zAnim};">${zLabel}</div>
+  </div>`;
+}
+
+// ── Buffer entry ────────────────────────────────────────────────────────────
+function makeBufferEntry(entry, isNew) {
+  const cells = parseBoardString(entry.board);
+  const cs = 7;
+  const z   = entry.z;
+  const zIsPos = typeof z==='number' && z>0;
+  const zIsNeg = typeof z==='number' && z<0;
+  const zColor = zIsPos ? '#059669' : zIsNeg ? '#dc2626' : '#94a3b8';
+  const zBg    = zIsPos ? '#ecfdf5' : zIsNeg ? '#fef2f2' : '#f8fafc';
+  const bord   = zIsPos ? '#a7f3d0' : zIsNeg ? '#fecaca' : '#e2e8f0';
+
+  let rects = '';
+  cells.forEach((v, i) => {
+    const fill = v===1 ? '#3b82f6' : v===-1 ? '#ef4444' : '#f8fafc';
+    rects += `<rect x="${(i%4)*cs+1}" y="${Math.floor(i/4)*cs+1}" width="${cs-1}" height="${cs-1}" rx="1" fill="${fill}"/>`;
+  });
+
+  const valStr = typeof z==='number' ? z.toFixed(1) : '0';
+  const sign = zIsPos ? '+' : '';
+
+  return `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;flex-shrink:0;animation:${isNew?'bufferPop 0.5s ease forwards':'none'};">
+    <div style="font-size:14px;font-family:var(--font-mono);color:#94a3b8;">t=${entry.move}</div>
+    <svg width="${cs*4+2}" height="${cs*4+2}" style="border-radius:3px;box-shadow:0 0 0 1.5px ${bord}">
+      ${rects}
+    </svg>
+    <div style="font-size:13px;font-family:var(--font-mono);font-weight:500;color:${zColor};background:${zBg};border-radius:3px;padding:1px 5px;">${sign}${valStr}</div>
+  </div>`;
+}
+
+// ── App State ───────────────────────────────────────────────────────────────
+const state = {
+  steps:     [],
+  stepIdx:   0,
+  playing:   false,
+  speed:     1000,
+  error:     '',
+  loaded:    false,
+  prevPhase: null,
+  prevBufLen:0,
+  timer:     null,
+};
+
+// ── Rendering ───────────────────────────────────────────────────────────────
+function render() {
+  const app = document.getElementById('app');
+  const { steps, stepIdx, playing, speed, error, loaded } = state;
+  const step  = steps[stepIdx] || null;
+  const meta  = step ? (PM[step.phase] || PM.GAME_START) : PM.GAME_START;
+  const total = steps.length;
+
+  const isFlushing = step?.phase === 'FLUSH';
+  const isUpdateZ  = step?.phase === 'UPDATE_Z';
+  const boardStr   = step?.board     || '................';
+  const policy     = step?.policy    || null;
+  const mask       = step?.mask      || null;
+  const chosenAction = step?.chosenAction ?? null;
+  const pool       = step?.pool      || [];
+  const sharedBuf  = step?.sharedBuffer || [];
+  const prevBuf    = state.prevBufLen || 0;
+
+  const nextMoveIdx = loaded ? findNextMoveApplied(steps, stepIdx) : 0;
+  const prevMoveIdx = loaded ? findPrevMoveApplied(steps, stepIdx) : 0;
+  const phaseChanged = step && step.phase !== state.prevPhase;
+
+  // ── Header ──
+  let headerRight = ``;
+  if (loaded) {
+    headerRight += `
+      <div style="display:flex;align-items:center;gap:8px;background:white;border-radius:12px;padding:7px 14px;border:1px solid #e2e8f0;">
+        <span style="font-size:13px;color:#94a3b8;letter-spacing:1px;font-family:var(--font-mono);">SPEED</span>
+        <input type="range" id="speedRange" min="200" max="3000" step="100" value="${speed}"
+          style="width:60px;accent-color:${meta.color};cursor:pointer;"/>
+        <span style="font-size:13px;color:#64748b;min-width:32px;font-family:var(--font-mono);">${(speed/1000).toFixed(1)}s</span>
+      </div>`;
+  }
+
+  let html = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;">
+      <div>
+        <div style="font-family:var(--font-primary);font-weight:700;font-size:28px;color:#2c3e50;letter-spacing:-0.3px;line-height:1;">Self-Play Component</div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;">${headerRight}</div>
+    </div>`;
+
+  if (error) {
+    html += `<div style="background:#fef2f2;border:1.5px solid #fecaca;border-radius:10px;padding:9px 14px;margin-bottom:14px;font-size:13px;color:#dc2626;">${error}</div>`;
+  }
+
+  if (!loaded) { app.innerHTML = html; bindEvents(); return; }
+
+  if (!step) { app.innerHTML = html; bindEvents(); return; }
+
+  // ── Timeline ──
+  let timelineDots = '';
+  steps.forEach((s, i) => {
+    const m = PM[s.phase]||PM.GAME_START;
+    const active=i===stepIdx, done=i<stepIdx;
+    const bg = active?m.color:done?m.color:'#e2e8f0';
+    const w  = active?15:8, h=active?15:8;
+    const shadow = active ? `0 0 0 3px ${m.color}40` : 'none';
+    const opacity = active?1:done?0.6:0.25;
+    timelineDots += `<div data-gotoidx="${i}" class="tldot" title="${m.label} (step ${i+1})"
+      style="flex:1;display:flex;justify-content:center;cursor:pointer;">
+      <div style="width:${w}px;height:${h}px;border-radius:50%;background:${bg};border:${active?'2.5px solid white':'none'};box-shadow:${shadow};opacity:${opacity};transition:all 0.25s ease;flex-shrink:0;"></div>
+    </div>`;
+  });
+
+  const tlProgress = (stepIdx/Math.max(total-1,1))*100;
+  html += `
+    <div style="background:white;border-radius:12px;padding:10px 16px;margin-bottom:14px;border:1px solid #f1f5f9;box-shadow:0 2px 8px rgba(0,0,0,0.05);display:flex;align-items:center;gap:10px;overflow-x:auto;">
+      <span style="font-size:13px;color:#94a3b8;letter-spacing:1.5px;flex-shrink:0;text-transform:uppercase;">Episode</span>
+      <div style="flex:1;position:relative;display:flex;align-items:center;min-width:0;">
+        <div style="position:absolute;top:50%;left:4px;right:4px;height:2px;background:#f1f5f9;transform:translateY(-50%);border-radius:1px;"></div>
+        <div style="position:absolute;top:50%;left:4px;width:calc(${tlProgress}% - 8px);height:2px;background:${meta.color};transform:translateY(-50%);border-radius:1px;transition:width 0.35s ease;"></div>
+        <div style="display:flex;width:100%;position:relative;z-index:2;">${timelineDots}</div>
+      </div>
+      <span style="font-size:13px;color:#94a3b8;flex-shrink:0;">${stepIdx+1}/${total}</span>
+    </div>`;
+
+  // ── Phase banner ──
+  const bannerBorder = `2px solid ${meta.color}30`;
+  const bannerAnim = phaseChanged ? 'fadeUp 0.35s ease' : 'none';
+  let badgesHtml = '';
+  if (step.winner) {
+    const wc = step.winner==='X'?'#eff6ff':step.winner==='O'?'#fef2f2':'#f8fafc';
+    const wb = step.winner==='X'?'#bfdbfe':step.winner==='O'?'#fecaca':'#e2e8f0';
+    const wt = step.winner==='X'?'#1d4ed8':step.winner==='O'?'#b91c1c':'#64748b';
+    badgesHtml += `<div style="background:${wc};border:1.5px solid ${wb};border-radius:8px;padding:4px 12px;font-size:13px;font-weight:700;color:${wt};">winner = ${step.winner}</div>`;
+  }
+  if (step.temp != null) {
+    badgesHtml += `<div style="background:white;border-radius:8px;padding:4px 10px;font-size:13px;color:#94a3b8;border:1px solid #e2e8f0;">τ=${step.temp}</div>`;
+  }
+  if (step.player) {
+    const pc = step.player==='X'?'#1d4ed8':'#b91c1c';
+    badgesHtml += `<div style="background:white;border-radius:8px;padding:4px 10px;font-size:14px;font-weight:700;border:1px solid #e2e8f0;color:${pc};">● ${step.player}</div>`;
+  }
+
+  html += `
+    <div style="background:${meta.bg};border:${bannerBorder};border-radius:14px;padding:12px 20px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;animation:${bannerAnim};box-shadow:0 4px 18px ${meta.color}12;">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <div style="width:42px;height:42px;border-radius:12px;background:${meta.color};color:white;display:flex;align-items:center;justify-content:center;font-size:22px;box-shadow:0 4px 12px ${meta.color}50;">
+          ${meta.icon}
+        </div>
+        <div>
+          <div style="font-family:var(--font-primary);font-weight:700;font-size:22px;color:#2c3e50;margin-bottom:2px;">${meta.label}</div>
+          ${(step.phase !== 'MCTS_DONE' && step.phase !== 'POSITION_LOGGED' && step.phase !== 'MOVE_APPLIED') ? `<div style="font-size:14px;color:#64748b;max-width:520px;line-height:1.6;font-family:var(--font-mono);">${step.desc}</div>` : ''}
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-shrink:0;">${badgesHtml}</div>
+    </div>`;
+
+  // ── Board + Policy grid ──
+  const boardSVG = makeBoardSVG(boardStr, policy, mask, chosenAction, step.player, 210);
+  const policyBarsSVG = makePolicyBarsSVG(policy, mask, chosenAction, step.player, 380, 68);
+
+  let topMovesHtml = '';
+  if (policy) {
+    const validIdxs = [...Array(16).keys()].filter(i => mask ? mask[i]>0.5 : true);
+    validIdxs.sort((a,b)=>(policy[b]||0)-(policy[a]||0));
+    const top5 = validIdxs.slice(0,5);
+    const maxPi = Math.max(...policy);
+    top5.forEach((i, rank) => {
+      const pi = policy[i];
+      const isChosen = i === chosenAction;
+      const bg2 = isChosen ? (step.player==='O'?'#fef2f2':'#eff6ff') : '#f8fafc';
+      const brd2 = isChosen ? `1.5px solid ${step.player==='O'?'#fecaca':'#bfdbfe'}` : '1px solid #f1f5f9';
+      const barFill = isChosen ? (step.player==='O'?'#dc2626':'#1d4ed8') : '#6366f1';
+      const piColor = isChosen ? (step.player==='O'?'#b91c1c':'#1d4ed8') : '#6366f1';
+      const star = isChosen ? `<span style="color:${step.player==='O'?'#b91c1c':'#1d4ed8'};margin-left:6px;">★</span>` : '';
+      topMovesHtml += `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 10px;border-radius:7px;margin-bottom:4px;background:${bg2};border:${brd2};">
+          <span style="font-size:13px;color:#475569;">#${rank+1} · cell ${i} [${Math.floor(i/4)},${i%4}]${star}</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div style="width:55px;height:5px;background:#f1f5f9;border-radius:2px;overflow:hidden;">
+              <div style="width:${(pi/maxPi)*100}%;height:100%;background:${barFill};border-radius:2px;"></div>
+            </div>
+            <span style="font-size:13px;font-weight:500;min-width:36px;text-align:right;color:${piColor};">${(pi*100).toFixed(2)}%</span>
+          </div>
+        </div>`;
+    });
+  }
+
+  const policyInfoText = policy
+    ? `${mask?mask.filter(v=>v>0.5).length:'?'} valid moves · chosen cell ${chosenAction??'—'}`
+    : '— not computed at this step —';
+
+  const moveStrHtml = step.moveStr ? `<span style="margin-left:10px;color:#f59e0b;">→ ${step.moveStr}</span>` : '';
+  const moveHistHtml = step.moveHistory ? `
+    <div style="margin-top:10px;padding:7px 12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;font-size:13px;color:#64748b;line-height:1.7;word-break:break-all;">
+      <span style="color:#94a3b8;letter-spacing:1px;">HISTORY: </span>${step.moveHistory}
+    </div>` : '';
+
+  html += `
+    <div style="display:grid;grid-template-columns:260px 1fr;gap:14px;margin-bottom:14px;">
+      <div style="background:white;border-radius:18px;padding:20px;border:1px solid #f1f5f9;box-shadow:0 4px 16px rgba(0,0,0,0.06);">
+        <div style="margin-bottom:12px;">
+          <div style="font-size:13px;color:#94a3b8;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:2px;">Game Board</div>
+          <div style="font-size:14px;color:#64748b;font-family:var(--font-mono);letter-spacing:0.5px;">
+            <span style="color:#1d4ed8;">■ X</span>
+            <span style="color:#94a3b8;margin:0 6px;">vs</span>
+            <span style="color:#b91c1c;">■ O</span>
+            ${moveStrHtml}
+          </div>
+        </div>
+        <div style="display:flex;justify-content:center;">${boardSVG}</div>
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+          ${[{c:'#1d4ed8',l:'X (blue)'},{c:'#b91c1c',l:'O (red)'},{c:'#1d4ed8',l:'chosen (X)'},{c:'#6366f1',l:'π(a|s)'}]
+            .map(({c,l})=>`<div style="display:flex;align-items:center;gap:4px;">
+              <div style="width:7px;height:7px;border-radius:2px;background:${c};"></div>
+              <span style="font-size:14px;color:#94a3b8;">${l}</span>
+            </div>`).join('')}
+        </div>
+      </div>
+      <div style="background:white;border-radius:18px;padding:20px;border:1px solid #f1f5f9;box-shadow:0 4px 16px rgba(0,0,0,0.06);display:flex;flex-direction:column;">
+        <div style="margin-bottom:12px;">
+          <div style="font-size:13px;color:#94a3b8;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:2px;">Policy π(a|s)</div>
+          <div style="font-size:14px;color:#94a3b8;">${policyInfoText}</div>
+        </div>
+        ${policyBarsSVG}
+        ${policy ? `<div style="margin-top:14px;flex:1;">
+          <div style="font-size:13px;color:#94a3b8;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Top moves</div>
+          ${topMovesHtml}
+        </div>` : ''}
+        ${moveHistHtml}
+      </div>
+    </div>`;
+
+  // ── Pool ──
+  const poolBorder = isUpdateZ ? '2px solid #f97316' : isFlushing ? '2px solid #ef4444' : '1px solid #f1f5f9';
+  const poolShadow = isUpdateZ ? '0 4px 24px rgba(249,115,22,0.12)' : isFlushing ? '0 4px 24px rgba(239,68,68,0.12)' : '0 4px 16px rgba(0,0,0,0.06)';
+
+  let poolBadges = '';
+  if (isUpdateZ) poolBadges += `<div style="background:#fff7ed;border-radius:8px;padding:4px 12px;font-size:14px;color:#ea580c;border:1.5px solid #fed7aa;animation:fadeUp 0.3s ease;">⟳ updating z from outcome…</div>`;
+  if (isFlushing) poolBadges += `<div style="background:#fef2f2;border-radius:8px;padding:4px 12px;font-size:14px;color:#ef4444;border:1.5px solid #fecaca;animation:fadeUp 0.3s ease;">⇢ flushing to buffer…</div>`;
+  poolBadges += `<div style="background:#f8fafc;border-radius:8px;padding:4px 12px;font-size:14px;color:#475569;border:1px solid #e2e8f0;">${pool.length} positions</div>`;
+
+  let poolContent = '';
+  if (pool.length === 0) {
+    poolContent = `<div style="height:72px;display:flex;align-items:center;justify-content:center;color:#d1d5db;font-size:13px;letter-spacing:1px;background:#fafafa;border-radius:10px;border:1.5px dashed #e2e8f0;">
+      ${isFlushing ? 'POOL CLEARED — SEE BUFFER BELOW' : 'POOL EMPTY'}
+    </div>`;
+  } else {
+    const legend = [
+      {c:'#1d4ed8',l:'X (blue)'},{c:'#dc2626',l:'O (red)'},
+      {c:'#f59e0b',l:'chosen'},{c:'#eff6ff',l:'valid'},
+      {c:'#059669',l:'z=+1'},{c:'#dc2626',l:'z=−1'},
+    ].map(({c,l})=>`<div style="display:flex;align-items:center;gap:5px;">
+      <div style="width:7px;height:7px;border-radius:2px;background:${c};border:1px solid #e2e8f0;"></div>
+      <span style="font-size:14px;color:#94a3b8;">${l}</span>
+    </div>`).join('');
+
+    poolContent = `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start;">
+      ${pool.map((entry,i) => makePoolEntry(entry, i===pool.length-1 && step.phase==='POSITION_LOGGED', isUpdateZ || isFlushing)).join('')}
+      <div style="display:flex;flex-direction:column;gap:4px;justify-content:center;margin-left:auto;padding-left:14px;border-left:1px solid #f1f5f9;flex-shrink:0;">${legend}</div>
+    </div>`;
+  }
+
+  html += `
+    <div style="background:white;border-radius:18px;padding:16px 20px;margin-bottom:14px;border:${poolBorder};box-shadow:${poolShadow};transition:border-color 0.4s,box-shadow 0.4s;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div>
+          <div style="font-size:13px;color:#94a3b8;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:2px;">Local Position Pool</div>
+          <div style="font-size:14px;color:#64748b;">(board, π, mask, z) per move · z=0 while game in progress</div>
+        </div>
+        <div style="display:flex;gap:8px;">${poolBadges}</div>
+      </div>
+      ${poolContent}
+    </div>`;
+
+  // ── Shared Memory Buffer ──
+  const bufBorder = sharedBuf.length > prevBuf ? '2px solid #ef4444' : '1px solid #f1f5f9';
+  const bufShadow = sharedBuf.length > prevBuf ? '0 4px 24px rgba(239,68,68,0.10)' : '0 4px 16px rgba(0,0,0,0.06)';
+  const glowDot = sharedBuf.length>0 ? '0 0 7px #ef4444' : 'none';
+  const fillPct = Math.min((sharedBuf.length/48)*100,100);
+  const fillColor = sharedBuf.length>38?'#ef4444':sharedBuf.length>20?'#f59e0b':'#10b981';
+
+  let bufContent = '';
+  if (sharedBuf.length === 0) {
+    bufContent = `<div style="height:60px;display:flex;align-items:center;justify-content:center;color:#d1d5db;font-size:13px;letter-spacing:1px;background:#fafafa;border-radius:10px;border:1.5px dashed #e2e8f0;">AWAITING FIRST FLUSH…</div>`;
+  } else {
+    bufContent = `<div id="bufferScroll" style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;align-items:flex-start;">
+      ${sharedBuf.map((entry,i) => makeBufferEntry(entry, i >= prevBuf)).join('')}
+    </div>`;
+  }
+
+  html += `
+    <div style="background:white;border-radius:18px;padding:16px 20px;margin-bottom:14px;border:${bufBorder};box-shadow:${bufShadow};transition:border-color 0.5s,box-shadow 0.5s;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div style="width:9px;height:9px;border-radius:50%;background:#ef4444;box-shadow:${glowDot};"></div>
+            <div style="font-size:13px;color:#94a3b8;letter-spacing:1.5px;text-transform:uppercase;">Shared Memory Buffer</div>
+          </div>
+          <div style="font-size:14px;color:#64748b;margin-top:2px;">Replay buffer · sampled uniformly for training minibatches</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <div style="width:80px;height:6px;background:#f1f5f9;border-radius:3px;overflow:hidden;">
+            <div style="width:${fillPct}%;height:100%;background:${fillColor};border-radius:3px;transition:width 0.4s ease;"></div>
+          </div>
+          <span style="font-size:13px;color:#64748b;min-width:40px;">${sharedBuf.length} entries</span>
+        </div>
+      </div>
+      ${bufContent}
+    </div>`;
+
+  // ── Controls ──
+  function btn(label, id, disabled, big=false, wide=false) {
+    const sz = big ? 44 : 36;
+    const width = wide ? 'auto' : `${sz}px`;
+    const minW = wide ? '48px' : `${sz}px`;
+    const padding = wide ? '0 10px' : '0';
+    const br = big ? 12 : 9;
+    const fs = big ? 19 : wide ? 11 : 13;
+    const bg = disabled ? '#f8fafc' : 'white';
+    const color = disabled ? '#d1d5db' : '#1e293b';
+    const shadow = disabled ? 'none' : '0 2px 6px rgba(0,0,0,0.07)';
+    const ls = wide ? '0.5px' : '0';
+    return `<button id="${id}" ${disabled?'disabled':''} style="min-width:${minW};width:${width};height:${sz}px;padding:${padding};border-radius:${br}px;border:1.5px solid #e2e8f0;background:${bg};color:${color};font-size:${fs}px;font-weight:bold;font-family:var(--font-mono);display:flex;align-items:center;justify-content:center;box-shadow:${shadow};transition:all 0.18s;letter-spacing:${ls};">${label}</button>`;
+  }
+
+  let phaseDots = '';
+  steps.forEach((s,i) => {
+    const m = PM[s.phase]||PM.GAME_START;
+    const w = i===stepIdx ? 16 : 7;
+    const bg2 = i===stepIdx ? meta.color : i<stepIdx ? m.color : '#e2e8f0';
+    const opacity = i<=stepIdx ? 1 : 0.25;
+    phaseDots += `<div data-gotoidx="${i}" class="tldot" title="step ${i+1}: ${m.label}"
+      style="width:${w}px;height:7px;border-radius:4px;background:${bg2};cursor:pointer;transition:all 0.3s ease;opacity:${opacity};"></div>`;
+  });
+
+  const playBtnBg = playing ? '#ef4444' : meta.color;
+  const playBtnShadow = playing ? '#ef444450' : meta.color+'50';
+  html += `
+    <div style="display:flex;justify-content:center;align-items:center;gap:8px;background:white;border-radius:18px;padding:12px 20px;border:1px solid #f1f5f9;box-shadow:0 4px 16px rgba(0,0,0,0.06);flex-wrap:wrap;">
+      ${btn('|◀◀','btnFirst', stepIdx===0)}
+      ${btn('◀|','btnPrevMove', stepIdx===0, false, true)}
+      ${btn('‹','btnPrev', stepIdx===0, true)}
+      <button id="btnPlay" style="width:54px;height:54px;border-radius:15px;border:none;background:${playBtnBg};color:white;font-size:23px;display:flex;align-items:center;justify-content:center;transition:all 0.2s;box-shadow:0 4px 16px ${playBtnShadow};">
+        ${playing ? '⏸' : '▶'}
+      </button>
+      ${btn('›','btnNext', stepIdx===total-1, true)}
+      ${btn('|▶','btnNextMove', stepIdx===total-1, false, true)}
+      ${btn('▶▶|','btnLast', stepIdx===total-1)}
+      <div style="margin-left:10px;display:flex;gap:3px;flex-wrap:wrap;max-width:220px;">${phaseDots}</div>
+      <div style="margin-left:6px;padding:5px 14px;border-radius:20px;background:${meta.bg};border:1.5px solid ${meta.color}40;font-size:14px;font-weight:700;color:${meta.color};letter-spacing:0.5px;transition:all 0.3s;flex-shrink:0;">
+        ${meta.icon} ${meta.label}
+      </div>
+    </div>`;
+
+  app.innerHTML = html;
+  bindEvents();
+
+  // auto-scroll buffer
+  const bufScroll = document.getElementById('bufferScroll');
+  if (bufScroll) bufScroll.scrollLeft = bufScroll.scrollWidth;
+}
+
+function bindEvents() {
+  // Speed
+  const speedRange = document.getElementById('speedRange');
+  if (speedRange) speedRange.addEventListener('input', (e) => {
+    state.speed = +e.target.value;
+    render();
+  });
+
+  // Navigation buttons
+  const { steps, stepIdx } = state;
+  const total = steps.length;
+
+  const b = (id, fn) => { const el=document.getElementById(id); if(el) el.addEventListener('click',fn); };
+  b('btnFirst',    () => { stopPlay(); goTo(0); });
+  b('btnPrevMove', () => { stopPlay(); goTo(findPrevMoveApplied(steps, stepIdx)); });
+  b('btnPrev',     () => { stopPlay(); goTo(stepIdx-1); });
+  b('btnPlay',     () => { state.playing = !state.playing; schedulePlay(); render(); });
+  b('btnNext',     () => { stopPlay(); goTo(stepIdx+1); });
+  b('btnNextMove', () => { stopPlay(); goTo(findNextMoveApplied(steps, stepIdx)); });
+  b('btnLast',     () => { stopPlay(); goTo(total-1); });
+
+  // Timeline / phase dots
+  document.querySelectorAll('.tldot').forEach(el => {
+    el.addEventListener('click', () => {
+      const idx = parseInt(el.dataset.gotoidx);
+      if (!isNaN(idx)) { stopPlay(); goTo(idx); }
+    });
+  });
+}
+
+function loadLog(text) {
+  state.error = '';
+  try {
+    const lines = text.split('\n').filter(l => l.trim().startsWith('GAME'));
+    if (!lines.length) { state.error = 'No GAME lines found.'; render(); return; }
+    const s = buildSteps(lines);
+    if (!s.length) { state.error = 'Could not parse steps.'; render(); return; }
+    state.steps = s;
+    state.stepIdx = 0;
+    state.prevPhase = null;
+    state.prevBufLen = 0;
+    state.playing = false;
+    state.loaded = true;
+    render();
+  } catch(e) { state.error = 'Parse error: ' + e.message; render(); }
+}
+
+function goTo(idx) {
+  const clamped = Math.max(0, Math.min(state.steps.length-1, idx));
+  state.prevPhase  = state.steps[state.stepIdx]?.phase || null;
+  state.prevBufLen = state.steps[state.stepIdx]?.sharedBuffer?.length || 0;
+  state.stepIdx = clamped;
+  render();
+}
+
+function stopPlay() {
+  state.playing = false;
+  clearTimeout(state.timer);
+}
+
+function schedulePlay() {
+  clearTimeout(state.timer);
+  if (!state.playing || !state.loaded) return;
+  state.timer = setTimeout(() => {
+    if (state.stepIdx < state.steps.length - 1) {
+      goTo(state.stepIdx + 1);
+      schedulePlay();
+    } else {
+      state.playing = false;
+      render();
+    }
+  }, state.speed);
+}
+
+// ── Hardcoded game log ──────────────────────────────────────────────────────
+const HARDCODED_LOG = `GAME | GAME_START | game_id=0 mode=selfplay is_eval=false board=................
+GAME | MCTS_DONE | game_id=0 move=0 player=X temp=1.0000 action_idx=7 policy=0.0400,0.0300,0.0600,0.0300,0.0700,0.0800,0.0500,0.0400,0.0600,0.0500,0.1500,0.0700,0.0300,0.1300,0.0500,0.0600
+GAME | POSITION_LOGGED | game_id=0 move=0 player=X pool_size=1 board=................ planes=0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000 mask=1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000 policy=0.0400,0.0300,0.0600,0.0300,0.0700,0.0800,0.0500,0.0400,0.0600,0.0500,0.1500,0.0700,0.0300,0.1300,0.0500,0.0600 z=pending
+GAME | MOVE_APPLIED | game_id=0 move=0 move_str=1.3d next_idx=1 board=.......X........ planes_after=0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000
+GAME | MCTS_DONE | game_id=0 move=1 player=O temp=1.0000 action_idx=8 policy=0.0800,0.0400,0.0500,0.0400,0.0500,0.0200,0.0600,0.0000,0.0500,0.1100,0.0500,0.0600,0.0400,0.2400,0.0500,0.0600
+GAME | POSITION_LOGGED | game_id=0 move=1 player=O pool_size=2 board=.......X........ planes=0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000 mask=1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,0.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000 policy=0.0800,0.0400,0.0500,0.0400,0.0500,0.0200,0.0600,0.0000,0.0500,0.1100,0.0500,0.0600,0.0400,0.2400,0.0500,0.0600 z=pending
+GAME | MOVE_APPLIED | game_id=0 move=1 move_str=2.2a next_idx=0 board=.......XO....... planes_after=0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000
+GAME | MCTS_DONE | game_id=0 move=2 player=X temp=1.0000 action_idx=15 policy=0.0400,0.1300,0.0600,0.0500,0.1000,0.0400,0.0500,0.0000,0.0000,0.0500,0.0700,0.1800,0.0600,0.0700,0.0400,0.0600
+GAME | POSITION_LOGGED | game_id=0 move=2 player=X pool_size=3 board=.......XO....... planes=0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000 mask=1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,0.0000,0.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000 policy=0.0400,0.1300,0.0600,0.0500,0.1000,0.0400,0.0500,0.0000,0.0000,0.0500,0.0700,0.1800,0.0600,0.0700,0.0400,0.0600 z=pending
+GAME | MOVE_APPLIED | game_id=0 move=2 move_str=3.1d next_idx=1 board=.......XO......X planes_after=0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000
+GAME | MCTS_DONE | game_id=0 move=3 player=O temp=1.0000 action_idx=13 policy=0.0300,0.0200,0.1600,0.0300,0.0400,0.0300,0.1200,0.0000,0.0000,0.0500,0.1000,0.0400,0.0900,0.1200,0.1700,0.0000
+GAME | POSITION_LOGGED | game_id=0 move=3 player=O pool_size=4 board=.......XO......X planes=0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000 mask=1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,0.0000,0.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,0.0000 policy=0.0300,0.0200,0.1600,0.0300,0.0400,0.0300,0.1200,0.0000,0.0000,0.0500,0.1000,0.0400,0.0900,0.1200,0.1700,0.0000 z=pending
+GAME | MOVE_APPLIED | game_id=0 move=3 move_str=4.1b next_idx=0 board=.......XO....O.X planes_after=0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000
+GAME | MCTS_DONE | game_id=0 move=4 player=X temp=1.0000 action_idx=9 policy=0.0500,0.0700,0.0700,0.0500,0.2400,0.0600,0.0600,0.0000,0.0000,0.0500,0.2000,0.0100,0.0800,0.0000,0.0600,0.0000
+GAME | POSITION_LOGGED | game_id=0 move=4 player=X pool_size=5 board=.......XO....O.X planes=0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000 mask=1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,0.0000,0.0000,1.0000,1.0000,1.0000,1.0000,0.0000,1.0000,0.0000 policy=0.0500,0.0700,0.0700,0.0500,0.2400,0.0600,0.0600,0.0000,0.0000,0.0500,0.2000,0.0100,0.0800,0.0000,0.0600,0.0000 z=pending
+GAME | MOVE_APPLIED | game_id=0 move=4 move_str=5.2b next_idx=1 board=.......XOX...O.X planes_after=0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000
+GAME | MCTS_DONE | game_id=0 move=5 player=O temp=1.0000 action_idx=10 policy=0.1000,0.0300,0.1300,0.0400,0.1100,0.1600,0.1300,0.0000,0.0000,0.0000,0.1200,0.0500,0.0700,0.0000,0.0600,0.0000
+GAME | POSITION_LOGGED | game_id=0 move=5 player=O pool_size=6 board=.......XOX...O.X planes=0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000 mask=1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,0.0000,0.0000,0.0000,1.0000,1.0000,1.0000,0.0000,1.0000,0.0000 policy=0.1000,0.0300,0.1300,0.0400,0.1100,0.1600,0.1300,0.0000,0.0000,0.0000,0.1200,0.0500,0.0700,0.0000,0.0600,0.0000 z=pending
+GAME | MOVE_APPLIED | game_id=0 move=5 move_str=6.2c next_idx=0 board=.......XOXO..O.X planes_after=0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000
+GAME | MCTS_DONE | game_id=0 move=6 player=X temp=0.1 action_idx=2 policy=0.0000,0.0006,0.9577,0.0000,0.0331,0.0001,0.0006,0.0000,0.0000,0.0000,0.0000,0.0000,0.0001,0.0000,0.0079,0.0000
+GAME | POSITION_LOGGED | game_id=0 move=6 player=X pool_size=7 board=.......XOXO..O.X planes=0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000 mask=1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,0.0000,1.0000,0.0000 policy=0.0000,0.0006,0.9577,0.0000,0.0331,0.0001,0.0006,0.0000,0.0000,0.0000,0.0000,0.0000,0.0001,0.0000,0.0079,0.0000 z=pending
+GAME | MOVE_APPLIED | game_id=0 move=6 move_str=7.4c next_idx=1 board=..X....XOXO..O.X planes_after=0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000
+GAME | MCTS_DONE | game_id=0 move=7 player=O temp=0.1 action_idx=0 policy=0.2286,0.1027,0.0000,0.0430,0.0430,0.0430,0.0430,0.0000,0.0000,0.0000,0.0000,0.0005,0.0166,0.0000,0.4796,0.0000
+GAME | POSITION_LOGGED | game_id=0 move=7 player=O pool_size=8 board=..X....XOXO..O.X planes=0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000 mask=1.0000,1.0000,0.0000,1.0000,1.0000,1.0000,1.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,0.0000,1.0000,0.0000 policy=0.2286,0.1027,0.0000,0.0430,0.0430,0.0430,0.0430,0.0000,0.0000,0.0000,0.0000,0.0005,0.0166,0.0000,0.4796,0.0000 z=pending
+GAME | MOVE_APPLIED | game_id=0 move=7 move_str=8.4a next_idx=0 board=O.X....XOXO..O.X planes_after=0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000
+GAME | MCTS_DONE | game_id=0 move=8 player=X temp=0.1 action_idx=4 policy=0.0000,0.0145,0.0000,0.0011,0.6466,0.0065,0.0027,0.0000,0.0000,0.0000,0.0000,0.0000,0.1160,0.0000,0.2126,0.0000
+GAME | POSITION_LOGGED | game_id=0 move=8 player=X pool_size=9 board=O.X....XOXO..O.X planes=0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000 mask=0.0000,1.0000,0.0000,1.0000,1.0000,1.0000,1.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,0.0000,1.0000,0.0000 policy=0.0000,0.0145,0.0000,0.0011,0.6466,0.0065,0.0027,0.0000,0.0000,0.0000,0.0000,0.0000,0.1160,0.0000,0.2126,0.0000 z=pending
+GAME | MOVE_APPLIED | game_id=0 move=8 move_str=9.3a next_idx=1 board=O.X.X..XOXO..O.X planes_after=1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000
+GAME | MCTS_DONE | game_id=0 move=9 player=O temp=0.1 action_idx=3 policy=0.0000,0.7529,0.0000,0.1216,0.0000,0.0000,0.0034,0.0000,0.0000,0.0000,0.0000,0.1216,0.0003,0.0000,0.0001,0.0000
+GAME | POSITION_LOGGED | game_id=0 move=9 player=O pool_size=10 board=O.X.X..XOXO..O.X planes=1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000 mask=0.0000,1.0000,0.0000,1.0000,0.0000,1.0000,1.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,0.0000,1.0000,0.0000 policy=0.0000,0.7529,0.0000,0.1216,0.0000,0.0000,0.0034,0.0000,0.0000,0.0000,0.0000,0.1216,0.0003,0.0000,0.0001,0.0000 z=pending
+GAME | MOVE_APPLIED | game_id=0 move=9 move_str=10.4d next_idx=0 board=O.XOX..XOXO..O.X planes_after=0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000
+GAME | MCTS_DONE | game_id=0 move=10 player=X temp=0.1 action_idx=1 policy=0.0000,0.9948,0.0000,0.0000,0.0000,0.0000,0.0042,0.0000,0.0000,0.0000,0.0000,0.0000,0.0010,0.0000,0.0000,0.0000
+GAME | POSITION_LOGGED | game_id=0 move=10 player=X pool_size=11 board=O.XOX..XOXO..O.X planes=0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000 mask=0.0000,1.0000,0.0000,0.0000,0.0000,1.0000,1.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,0.0000,1.0000,0.0000 policy=0.0000,0.9948,0.0000,0.0000,0.0000,0.0000,0.0042,0.0000,0.0000,0.0000,0.0000,0.0000,0.0010,0.0000,0.0000,0.0000 z=pending
+GAME | MOVE_APPLIED | game_id=0 move=10 move_str=11.4b next_idx=1 board=OXXOX..XOXO..O.X planes_after=1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,1.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000
+GAME | MCTS_DONE | game_id=0 move=11 player=O temp=0.1 action_idx=6 policy=0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000
+GAME | POSITION_LOGGED | game_id=0 move=11 player=O pool_size=12 board=OXXOX..XOXO..O.X planes=1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,1.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000 mask=0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,0.0000,1.0000,0.0000 policy=0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000 z=pending
+GAME | MOVE_APPLIED | game_id=0 move=11 move_str=12.3c next_idx=0 board=OXXOX.OXOXO..O.X planes_after=0.0000,1.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000
+GAME | MCTS_DONE | game_id=0 move=12 player=X temp=0.1 action_idx=12 policy=0.0000,0.0000,0.0000,0.0000,0.0000,0.0022,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.9977,0.0000,0.0000,0.0000
+GAME | POSITION_LOGGED | game_id=0 move=12 player=X pool_size=13 board=OXXOX.OXOXO..O.X planes=0.0000,1.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000 mask=0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,1.0000,0.0000,1.0000,0.0000 policy=0.0000,0.0000,0.0000,0.0000,0.0000,0.0022,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.9977,0.0000,0.0000,0.0000 z=pending
+GAME | MOVE_APPLIED | game_id=0 move=12 move_str=13.1a next_idx=1 board=OXXOX.OXOXO.XO.X planes_after=1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,1.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000
+GAME | MCTS_DONE | game_id=0 move=13 player=O temp=0.1 action_idx=11 policy=0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000
+GAME | POSITION_LOGGED | game_id=0 move=13 player=O pool_size=14 board=OXXOX.OXOXO.XO.X planes=1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,1.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000 mask=0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000 policy=0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000 z=pending
+GAME | MOVE_APPLIED | game_id=0 move=13 move_str=14.2d next_idx=0 board=OXXOX.OXOXOOXO.X planes_after=0.0000,1.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,1.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,1.0000,1.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000
+GAME | MCTS_DONE | game_id=0 move=14 player=X temp=0.1 action_idx=14 policy=0.0000,0.0000,0.0000,0.0000,0.0000,0.0005,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.9995,0.0000
+GAME | POSITION_LOGGED | game_id=0 move=14 player=X pool_size=15 board=OXXOX.OXOXOOXO.X planes=0.0000,1.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,1.0000,1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,1.0000,1.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000 mask=0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,1.0000,0.0000 policy=0.0000,0.0000,0.0000,0.0000,0.0000,0.0005,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.0000,0.9995,0.0000 z=pending
+GAME | MOVE_APPLIED | game_id=0 move=14 move_str=15.1c next_idx=1 board=OXXOX.OXOXOOXOXX planes_after=1.0000,0.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,1.0000,1.0000,0.0000,1.0000,0.0000,0.0000,0.0000,1.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,1.0000,0.0000,0.0000,1.0000,0.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000
+GAME | GAME_END | game_id=0 mode=selfplay winner=O total_moves=15 move_history=1.3d 2.2a 3.1d 4.1b 5.2b 6.2c 7.4c 8.4a 9.3a 10.4d 11.4b 12.3c 13.1a 14.2d 15.1c  board=OXXOX.OXOXOOXOXX z=0:-1.0000;1:1.0000;2:-1.0000;3:1.0000;4:-1.0000;5:1.0000;6:-1.0000;7:1.0000;8:-1.0000;9:1.0000;10:-1.0000;11:1.0000;12:-1.0000;13:1.0000;14:-1.0000`;
+
+// ── Init ────────────────────────────────────────────────────────────────────
+loadLog(HARDCODED_LOG);
+</script>
+</body>
+</html>
