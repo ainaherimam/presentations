@@ -43,16 +43,61 @@ ul li {
 
 
 ---
-# Environement: TicTacToe 4x4 Misere
+# Environement: TicTacToe 4x4
 
-A standard 4×4 Tic-Tac-Toe environment and misère 4×4 Tic-Tac-Toe, a modified win condition.
+A two-player 4×4 Tic-Tac-Toe game where the first to align 3 in a row wins.
 
 <div class="two-column">
 
 <div class="column">
 
-![TicTacToe 4x4 - Misere](boards.png)
+<style>
+img {
+  display: block;
+  margin: 0 auto;
+}
+</style>
 
+![width:360px center](boards.png)
+</div>
+
+<div class="column">
+
+##
+
+
+<style scoped>
+ul li {
+  font-size: 0.8em;
+}
+</style>
+
+
+- Simple game and rule set for validation
+- ~5 moves per game on average
+
+<!-- **Addresses:** Data efficiency + Non-linear modeling barriers -->
+
+</div>
+
+---
+
+# Environement: TicTacToe 4x4 - Misère
+
+A 4×4 Tic-Tac-Toe with a modified win condition.
+
+<div class="two-column">
+
+<div class="column">
+
+<style>
+img {
+  display: block;
+  margin: 0 auto;
+}
+</style>
+
+![width:360px center](board_misere.png)
 </div>
 
 <div class="column">
@@ -66,10 +111,9 @@ ul li {
 </style>
 
 
-- Simple game and rule set for validation
 - ~14 moves per game on average (misère)
-- Misère rules create different optimal strategies
-- Deterministic and fully observable
+- Misère rules offers different strategies
+
 <!-- **Addresses:** Data efficiency + Non-linear modeling barriers -->
 
 </div>
@@ -99,7 +143,6 @@ ul li {
 
 - MCTS requires millions of simulations → benefits from C++ performance
 - Better control over memory and parallelization
-- From-scratch implementation enables deeper understanding and customization
 
 
 <!-- **Addresses:** Data efficiency + Non-linear modeling barriers -->
@@ -139,7 +182,7 @@ img {
 # Dataset structure
 
 **Board state**: $
-s \in \mathbb{R}^{3 \times 4 \times 4}, flattened \in \mathbb{R}^{48}
+s \in \mathbb{[0,1]}^{3 \times 4 \times 4}
 $
 
 * Plane 1: 1 if the cell has a piece of the current player, 0 otherwise.
@@ -147,7 +190,7 @@ $
 * Plane 3: all 0s if current player = Player 1, all 1s if current player = Player 2.
 
 **Mask** : $
-m \in {0,1}^{16}, \quad m_a = 1 \text{ if action } a \text{ is legal}
+m \in {[0,1]}^{16}, \quad m_a = 1 \text{ if action } a \text{ is legal}
 $
 
 **Policy**: $
@@ -193,7 +236,7 @@ ul li {
 - The trainer saves checkpoints periodically (every X steps)
 - Each new checkpoint is treated as a candidate model
 - The candidate is challenged against the current best model in a series of 400 games (alternate who goes first for fairness)
-- If the candidate wins more than 55% of decisive games, it is promoted to the new best model
+- If the candidate wins more than 55\% of decisive games, it is promoted to the new best model
 - Otherwise, the current best model remains the best model.
 ---
 
@@ -285,9 +328,43 @@ img {
 
 <!-- _class: section-divider -->
 
-# Future plans
+# Discussions and furture plans
 
 ---
+# Discussions
+
+<style scoped>
+ul li {
+  font-size: 0.8em;
+}
+</style>
+
+- **Pipeline:**
+Python -> C++ -> JAX?
+- **Shared memory vs Triton Interface Server**
+Shared memory wins on single machine; Triton better for scaling.
+
+- **NN vs NN + MCTS**
+Network alone plays well but makes occasional deep look-ahead errors, combined with MCTS it achieve perfect play.
+
+- Otherwise, the current best model remains the best model.
+
+
+---
+# Challenges
+
+<style scoped>
+ul li {
+  font-size: 0.8em;
+}
+</style>
+
+- Paper and codee implementations gaps (e.g. storing Q/N in child nodes, not edges)
+- Perspective bugs in MCTS backpropagation were the hard to catch.
+- C++ is fast and efficient but shared memory setups and debug is complex.
+
+
+----
 
 <!-- _class: title-slide -->
 # Future Plan

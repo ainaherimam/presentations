@@ -710,8 +710,6 @@ function computeSnapshots(actions) {
         }
         if (!backpropPath.includes(id)) backpropPath.push(id);
         activeNodeId = id;
-        // Skip ROOT update step — only show edge from root's child upward
-        if (payload.move === "ROOT") continue;
 
       } else if (action === "DONE") {
         nodes["ROOT"].visits = parseInt(payload.root_visits);
@@ -745,12 +743,13 @@ function computeSnapshots(actions) {
       }
     }
 
-    // The "active" backprop edge is between the last two nodes in backpropPath
-    // (from = parent closer to root, to = child closer to leaf)
-    // edges stored as from=parent, to=child; backpropPath grows leaf→root
-    // so path[-1]=most recently updated child, path[-2]=its parent
+    // The "active" backprop edge is between the last two nodes in backpropPath.
+    // backpropPath grows leaf→root, so path[-1] = most recently updated (closer to root),
+    // path[-2] = one step closer to the leaf.
+    // Edges are stored as { from: parent, to: child } (root→leaf direction).
+    // So the active edge is: from = path[-1] (parent), to = path[-2] (child).
     const backpropActiveEdge = (phase === "BACKPROP" && action === "STEP" && backpropPath.length >= 2)
-      ? { from: backpropPath[backpropPath.length - 2], to: backpropPath[backpropPath.length - 1] }
+      ? { from: backpropPath[backpropPath.length - 1], to: backpropPath[backpropPath.length - 2] }
       : null;
 
     snapshots.push({
