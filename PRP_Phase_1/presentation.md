@@ -347,8 +347,6 @@ Shared memory wins on single machine; Triton better for scaling.
 - **NN vs NN + MCTS**
 Network alone plays well but makes occasional deep look-ahead errors, combined with MCTS it achieve perfect play.
 
-- Otherwise, the current best model remains the best model.
-
 
 ---
 # Challenges
